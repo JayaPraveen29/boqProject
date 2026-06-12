@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import Sidebar from './components/Sidebar/Sidebar'
+import Sidebar from './components/sidebar/sidebar'
 import EntryPage from './pages/EntryPage/EntryPage'
 import ViewData from './pages/ViewData/ViewData'
 import AbstractReport from './pages/AbstractReport/AbstractReport'
