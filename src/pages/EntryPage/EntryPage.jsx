@@ -2,14 +2,15 @@ import { useState, useEffect } from "react";
 import { HiPlus, HiTrash } from "react-icons/hi2";
 import { db } from "../../firebase";
 import {
-  collection, addDoc, getDocs, query, orderBy, limit, deleteDoc, doc
+  collection, addDoc, getDocs, query, orderBy, deleteDoc, doc
 } from "firebase/firestore";
 import "./EntryPage.css";
+
+const DENSITY = 7.85; // g/cm³ for steel
 
 export default function EntryPage() {
   const [loading, setLoading] = useState(false);
 
-  // Top header dropdowns
   const [headerData, setHeaderData] = useState({
     "PO No": "",
     "Equipment": "",
@@ -17,48 +18,47 @@ export default function EntryPage() {
     "Drawing Number": "",
   });
 
-  // Weight f. Order — user entered (manual input)
   const [weightFOrderEntered, setWeightFOrderEntered] = useState("");
-  // Weight f. Order — calculated automatically from rows
   const [weightFOrderCalculated, setWeightFOrderCalculated] = useState(0);
 
-  // Master data for dropdowns
   const [allPONos, setAllPONos] = useState([]);
   const [allEquipments, setAllEquipments] = useState([]);
   const [allPartNames, setAllPartNames] = useState([]);
   const [allDrawingNumbers, setAllDrawingNumbers] = useState([]);
-  const [allSizes, setAllSizes] = useState([]);
+  const [allSections, setAllSections] = useState([]);       // renamed from allSizes
+  const [allThicknesses, setAllThicknesses] = useState([]);
   const [allLengths, setAllLengths] = useState([]);
   const [allWidths, setAllWidths] = useState([]);
 
-  // Custom input states
-  const [customInputs, setCustomInputs] = useState({});
+  // Tracks which field's suggestion dropdown is currently open
+  const [activeSuggestion, setActiveSuggestion] = useState(null);
 
-  // Rows
   const [items, setItems] = useState([{
     id: Date.now(),
     pos: 1,
     quantity: "",
-    size: "",
+    section: "",           // renamed from size
+    thickness: "",
     length: "",
     width: "",
     singleWeight: "",
-    drgWeight: "",      // ← NEW
-    CalucatedWeight: "",
+    drgWeight: "",
+    drgWeightManual: false,
+    calcWeightManual: false,
     totalWeight: 0,
   }]);
 
-  // Next POS per drawing number
   const [nextPos, setNextPos] = useState(1);
 
   const fetchMasterData = async () => {
     try {
-      const [poNoSnap, eqSnap, pnSnap, dnSnap, sizeSnap, lenSnap, widSnap] = await Promise.all([
+      const [poNoSnap, eqSnap, pnSnap, dnSnap, secSnap, thickSnap, lenSnap, widSnap] = await Promise.all([
         getDocs(collection(db, "poNos")),
         getDocs(collection(db, "equipments")),
         getDocs(collection(db, "partNames")),
         getDocs(collection(db, "drawingNumbers")),
-        getDocs(collection(db, "sizes")),
+        getDocs(collection(db, "sections")),       // renamed from sizes
+        getDocs(collection(db, "thicknesses")),
         getDocs(collection(db, "lengths")),
         getDocs(collection(db, "widths")),
       ]);
@@ -73,7 +73,8 @@ export default function EntryPage() {
       setAllEquipments(map(eqSnap));
       setAllPartNames(map(pnSnap));
       setAllDrawingNumbers(map(dnSnap));
-      setAllSizes(map(sizeSnap));
+      setAllSections(map(secSnap));
+      setAllThicknesses(map(thickSnap));
       setAllLengths(map(lenSnap));
       setAllWidths(map(widSnap));
     } catch (error) {
@@ -82,14 +83,10 @@ export default function EntryPage() {
     }
   };
 
-  // Fetch next POS for selected drawing number
   const fetchNextPos = async (drawingNumber) => {
     if (!drawingNumber) { setNextPos(1); return; }
     try {
-      const q = query(
-        collection(db, "entries"),
-        orderBy("drawingNumber"),
-      );
+      const q = query(collection(db, "entries"), orderBy("drawingNumber"));
       const snap = await getDocs(q);
       let maxPos = 0;
       snap.docs.forEach((d) => {
@@ -101,49 +98,82 @@ export default function EntryPage() {
         }
       });
       setNextPos(maxPos + 1);
-      // Update items POS starting from maxPos+1
-      setItems((prev) =>
-        prev.map((item, idx) => ({ ...item, pos: maxPos + 1 + idx }))
-      );
+      setItems((prev) => prev.map((item, idx) => ({ ...item, pos: maxPos + 1 + idx })));
     } catch (e) {
       console.error("Error fetching POS:", e);
     }
   };
 
-  useEffect(() => {
-    fetchMasterData();
-  }, []);
-
-  useEffect(() => {
-    fetchNextPos(headerData["Drawing Number"]);
-  }, [headerData["Drawing Number"]]);
-
-  // Auto calculate Weight f. Order (Calculated) = sum of all totalWeights
+  useEffect(() => { fetchMasterData(); }, []);
+  useEffect(() => { fetchNextPos(headerData["Drawing Number"]); }, [headerData["Drawing Number"]]);
   useEffect(() => {
     const total = items.reduce((sum, item) => sum + (parseFloat(item.totalWeight) || 0), 0);
     setWeightFOrderCalculated(total);
   }, [items]);
 
   const parseNum = (v) => parseFloat(v?.toString().replace(/,/g, "")) || 0;
-
   const formatNum = (n) =>
     n.toLocaleString("en-IN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+  const calcDrgWeight = (quantity, singleWeight) => {
+    const q = parseNum(quantity);
+    const sw = parseNum(singleWeight);
+    if (!q || !sw) return "";
+    return (q * sw).toString();
+  };
+
+  // Calculated Weight = Length × Width × Thickness × Density × Quantity / 1,000,000
+  const calcTotalWeight = (length, width, thickness, quantity) => {
+    const l = parseNum(length);
+    const w = parseNum(width);
+    const t = parseNum(thickness);
+    const q = parseNum(quantity);
+    if (!l || !w || !t || !q) return 0;
+    return (l * w * t * DENSITY * q) / 1_000_000;
+  };
 
   const handleHeaderChange = (key, value) => {
     setHeaderData((prev) => ({ ...prev, [key]: value }));
   };
 
-  // Single Weight is entered by user; Total Weight = Quantity x Single Weight (auto-calculated)
   const handleItemChange = (id, key, value) => {
     setItems((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
         const updated = { ...item, [key]: value };
-        if (key === "quantity" || key === "singleWeight") {
-          updated.totalWeight =
-            parseNum(updated.quantity) * parseNum(updated.singleWeight);
+
+        if (key === "drgWeight") {
+          updated.drgWeightManual = true;
+        } else if ((key === "quantity" || key === "singleWeight") && !updated.drgWeightManual) {
+          updated.drgWeight = calcDrgWeight(updated.quantity, updated.singleWeight);
         }
+
+        if (key === "totalWeight") {
+          updated.calcWeightManual = true;
+          updated.totalWeight = parseNum(value);
+        } else if ((key === "length" || key === "width" || key === "thickness" || key === "quantity") && !updated.calcWeightManual) {
+          updated.totalWeight = calcTotalWeight(updated.length, updated.width, updated.thickness, updated.quantity);
+        }
+
         return updated;
+      })
+    );
+  };
+
+  const resetDrgWeightAuto = (id) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        return { ...item, drgWeightManual: false, drgWeight: calcDrgWeight(item.quantity, item.singleWeight) };
+      })
+    );
+  };
+
+  const resetCalcWeightAuto = (id) => {
+    setItems((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        return { ...item, calcWeightManual: false, totalWeight: calcTotalWeight(item.length, item.width, item.thickness, item.quantity) };
       })
     );
   };
@@ -156,11 +186,14 @@ export default function EntryPage() {
         id: Date.now(),
         pos: lastPos + 1,
         quantity: "",
-        size: "",
+        section: "",
+        thickness: "",
         length: "",
         width: "",
         singleWeight: "",
-        drgWeight: "",    // ← NEW
+        drgWeight: "",
+        drgWeightManual: false,
+        calcWeightManual: false,
         totalWeight: 0,
       },
     ]);
@@ -170,48 +203,22 @@ export default function EntryPage() {
     if (items.length === 1) return;
     setItems((prev) => {
       const filtered = prev.filter((i) => i.id !== id);
-      // Recalculate POS after removal
       return filtered.map((item, idx) => ({ ...item, pos: nextPos + idx }));
     });
   };
 
-  // ── Custom input helpers ──
-  const toggleCustomInput = (key) => {
-    setCustomInputs((prev) => ({
-      ...prev,
-      [key]: { show: !prev[key]?.show, value: prev[key]?.value || "" },
-    }));
-  };
-
-  const setCustomInputValue = (key, value) => {
-    setCustomInputs((prev) => ({ ...prev, [key]: { ...prev[key], value } }));
-  };
-
-  const getCustomInputState = (key) =>
-    customInputs[key] || { show: false, value: "" };
-
-  const handleAddCustomValue = async (collectionName, value, setOptions, currentOptions, onSelect) => {
-    if (!value.trim()) { alert("Please enter a value!"); return; }
-    const trimmed = value.trim();
-    const existing = currentOptions.find(
-      (o) => o.value.toLowerCase() === trimmed.toLowerCase()
-    );
-    if (existing) {
-      alert(`"${trimmed}" already exists.`);
-      onSelect(existing.value);
-      return;
-    }
+  // Saves a new value to Firestore if it doesn't already exist (case-insensitive match)
+  const saveValueIfNew = async (collectionName, value, options, setOptions) => {
+    const trimmed = (value || "").trim();
+    if (!trimmed) return;
+    const exists = options.find((o) => o.value.toLowerCase() === trimmed.toLowerCase());
+    if (exists) return;
     try {
       const docRef = await addDoc(collection(db, collectionName), { value: trimmed });
       const newOption = { id: docRef.id, value: trimmed, isManual: true };
-      setOptions((prev) =>
-        [...prev, newOption].sort((a, b) => a.value.localeCompare(b.value))
-      );
-      onSelect(trimmed);
-      alert(`"${trimmed}" added successfully!`);
+      setOptions((prev) => [...prev, newOption].sort((a, b) => a.value.localeCompare(b.value)));
     } catch (error) {
       console.error("Error adding value:", error);
-      alert("Error adding value. Please try again.");
     }
   };
 
@@ -220,204 +227,137 @@ export default function EntryPage() {
     try {
       await deleteDoc(doc(db, collectionName, option.id));
       setOptions((prev) => prev.filter((o) => o.id !== option.id));
-      // Clear from header if selected
       if (fieldKey) {
         setHeaderData((prev) =>
           prev[fieldKey] === option.value ? { ...prev, [fieldKey]: "" } : prev
         );
       }
-      // Clear from items if size / length / width
-      if (["sizes", "lengths", "widths"].includes(collectionName)) {
-        const itemKey = collectionName === "sizes" ? "size" : collectionName === "lengths" ? "length" : "width";
+      if (["sections", "thicknesses", "lengths", "widths"].includes(collectionName)) {
+        const itemKey =
+          collectionName === "sections" ? "section" :
+          collectionName === "thicknesses" ? "thickness" :
+          collectionName === "lengths" ? "length" : "width";
         setItems((prev) =>
           prev.map((item) =>
             item[itemKey] === option.value ? { ...item, [itemKey]: "" } : item
           )
         );
       }
-      alert(`"${option.value}" deleted!`);
     } catch (error) {
       console.error("Error deleting:", error);
       alert("Error deleting. Please try again.");
     }
   };
 
-  const renderDropdown = (
-    label, value, onChange, options,
-    collectionName, setOptions, fieldKey = null,
-    onSelect = null
-  ) => {
-    const key = collectionName;
-    const customState = getCustomInputState(key);
-    const handleSelect = onSelect || ((val) => onChange({ target: { value: val } }));
+  // Autocomplete field for header-level inputs (PO No, Equipment, Part Name, Drawing Number)
+  const renderAutocomplete = (label, value, onChange, options, collectionName, setOptions, fieldKey = null) => {
+    const fieldId = `header-${collectionName}`;
+    const isActive = activeSuggestion === fieldId;
+    const filtered = options.filter((o) =>
+      o.value.toLowerCase().includes((value || "").toLowerCase())
+    );
 
     return (
-      <div className="entry-input">
+      <div className="entry-input" style={{ position: "relative" }}>
         <label>{label} ({options.length})</label>
-        <div className="dropdown-container">
-          <div className="dropdown-row">
-            <select
-              className="dropdown-select"
-              value={value}
-              onChange={onChange}
-            >
-              <option value="">Select {label}</option>
-              {options.map((opt) => (
-                <option key={opt.id} value={opt.value}>{opt.value}</option>
-              ))}
-            </select>
-            <button
-              className="btn-toggle-custom"
-              onClick={() => toggleCustomInput(key)}
-              type="button"
-            >
-              {customState.show ? "✕" : "+"}
-            </button>
-          </div>
-
-          {customState.show && (
-            <div className="custom-input-section">
-              <div className="custom-input-row">
-                <input
-                  type="text"
-                  className="custom-input-field"
-                  value={customState.value}
-                  onChange={(e) => setCustomInputValue(key, e.target.value)}
-                  placeholder={`Enter new ${label.toLowerCase()}`}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter")
-                      handleAddCustomValue(
-                        collectionName, customState.value,
-                        setOptions, options, handleSelect
-                      );
+        <input
+          type="text"
+          className="autocomplete-field"
+          value={value || ""}
+          onChange={(e) => onChange({ target: { value: e.target.value } })}
+          onFocus={() => setActiveSuggestion(fieldId)}
+          onBlur={() => {
+            saveValueIfNew(collectionName, value, options, setOptions);
+            setTimeout(() => setActiveSuggestion(null), 150);
+          }}
+          placeholder={`Type or select ${label.toLowerCase()}`}
+          autoComplete="off"
+        />
+        {isActive && filtered.length > 0 && (
+          <div className="suggestion-list">
+            {filtered.map((opt) => (
+              <div key={opt.id} className="suggestion-item">
+                <span
+                  className="suggestion-text"
+                  onMouseDown={() => {
+                    onChange({ target: { value: opt.value } });
+                    setActiveSuggestion(null);
                   }}
-                />
-                <button
-                  className="btn-add-custom"
-                  onClick={() =>
-                    handleAddCustomValue(
-                      collectionName, customState.value,
-                      setOptions, options, handleSelect
-                    )
-                  }
-                  type="button"
                 >
-                  Add
+                  {opt.value}
+                </span>
+                <button
+                  type="button"
+                  className="suggestion-delete"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleDeleteValue(collectionName, opt, setOptions, fieldKey);
+                  }}
+                  title={`Delete "${opt.value}"`}
+                >
+                  <HiTrash />
                 </button>
               </div>
-              <div className="manual-values-list">
-                <div className="custom-values-header">Saved Values</div>
-                {options.filter((o) => o.isManual).length === 0 ? (
-                  <div className="no-manual-values">No values yet</div>
-                ) : (
-                  options.filter((o) => o.isManual).map((opt) => (
-                    <div key={opt.id} className="manual-value-item">
-                      <span className="manual-value-text">{opt.value}</span>
-                      <button
-                        className="btn-delete-value"
-                        onClick={() =>
-                          handleDeleteValue(collectionName, opt, setOptions, fieldKey)
-                        }
-                        type="button"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   };
 
-  // Per-row dropdown for Size / Length / Width (with unique key per row)
-  const renderRowDropdown = (item, fieldKey, label, options, collectionName, setOptions) => {
-    const key = `${fieldKey}-${item.id}`;
-    const customState = getCustomInputState(key);
+  // Autocomplete field for per-row item inputs (Section, Thickness, Length, Width)
+  const renderRowAutocomplete = (item, fieldKey, label, options, collectionName, setOptions) => {
+    const fieldId = `${fieldKey}-${item.id}`;
+    const isActive = activeSuggestion === fieldId;
+    const value = item[fieldKey] || "";
+    const filtered = options.filter((o) =>
+      o.value.toLowerCase().includes(value.toLowerCase())
+    );
 
     return (
-      <div className="entry-input" style={{ minWidth: "180px" }}>
+      <div className="entry-input" style={{ position: "relative", minWidth: "180px" }}>
         <label>{label} ({options.length})</label>
-        <div className="dropdown-container">
-          <div className="dropdown-row">
-            <select
-              className="dropdown-select"
-              value={item[fieldKey]}
-              onChange={(e) => handleItemChange(item.id, fieldKey, e.target.value)}
-            >
-              <option value="">Select {label}</option>
-              {options.map((opt) => (
-                <option key={opt.id} value={opt.value}>{opt.value}</option>
-              ))}
-            </select>
-            <button
-              className="btn-toggle-custom"
-              onClick={() => toggleCustomInput(key)}
-              type="button"
-            >
-              {customState.show ? "✕" : "+"}
-            </button>
-          </div>
-
-          {customState.show && (
-            <div className="custom-input-section">
-              <div className="custom-input-row">
-                <input
-                  type="text"
-                  className="custom-input-field"
-                  value={customState.value}
-                  onChange={(e) => setCustomInputValue(key, e.target.value)}
-                  placeholder={`Enter new ${label.toLowerCase()}`}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter")
-                      handleAddCustomValue(
-                        collectionName, customState.value,
-                        setOptions, options,
-                        (val) => handleItemChange(item.id, fieldKey, val)
-                      );
+        <input
+          type="text"
+          className="autocomplete-field"
+          value={value}
+          onChange={(e) => handleItemChange(item.id, fieldKey, e.target.value)}
+          onFocus={() => setActiveSuggestion(fieldId)}
+          onBlur={() => {
+            saveValueIfNew(collectionName, value, options, setOptions);
+            setTimeout(() => setActiveSuggestion(null), 150);
+          }}
+          placeholder={`Type or select ${label.toLowerCase()}`}
+          autoComplete="off"
+        />
+        {isActive && filtered.length > 0 && (
+          <div className="suggestion-list">
+            {filtered.map((opt) => (
+              <div key={opt.id} className="suggestion-item">
+                <span
+                  className="suggestion-text"
+                  onMouseDown={() => {
+                    handleItemChange(item.id, fieldKey, opt.value);
+                    setActiveSuggestion(null);
                   }}
-                />
-                <button
-                  className="btn-add-custom"
-                  onClick={() =>
-                    handleAddCustomValue(
-                      collectionName, customState.value,
-                      setOptions, options,
-                      (val) => handleItemChange(item.id, fieldKey, val)
-                    )
-                  }
-                  type="button"
                 >
-                  Add
+                  {opt.value}
+                </span>
+                <button
+                  type="button"
+                  className="suggestion-delete"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    handleDeleteValue(collectionName, opt, setOptions, null);
+                  }}
+                  title={`Delete "${opt.value}"`}
+                >
+                  <HiTrash />
                 </button>
               </div>
-              <div className="manual-values-list">
-                <div className="custom-values-header">Saved Values</div>
-                {options.filter((o) => o.isManual).length === 0 ? (
-                  <div className="no-manual-values">No values yet</div>
-                ) : (
-                  options.filter((o) => o.isManual).map((opt) => (
-                    <div key={opt.id} className="manual-value-item">
-                      <span className="manual-value-text">{opt.value}</span>
-                      <button
-                        className="btn-delete-value"
-                        onClick={() =>
-                          handleDeleteValue(collectionName, opt, setOptions, null)
-                        }
-                        type="button"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   };
@@ -438,11 +378,12 @@ export default function EntryPage() {
         items: items.map((i) => ({
           pos: i.pos,
           quantity: parseNum(i.quantity),
-          size: i.size,
+          section: i.section,          // renamed from size
+          thickness: parseNum(i.thickness),
           length: parseNum(i.length),
           width: parseNum(i.width),
           singleWeight: parseNum(i.singleWeight),
-          drgWeight: parseNum(i.drgWeight),   // ← NEW
+          drgWeight: parseNum(i.drgWeight),
           totalWeight: parseNum(i.totalWeight),
         })),
         totalWeight: weightFOrderCalculated,
@@ -465,51 +406,17 @@ export default function EntryPage() {
     <div className="entry-container">
       <h1 className="entry-heading">SIEC-BOQ Entry</h1>
 
-      {/* Top Header Dropdowns */}
       <div className="form-wrapper">
         <h3>Project Details</h3>
         <div className="entry-grid">
-
-          {renderDropdown(
-            "PO No",
-            headerData["PO No"],
-            (e) => handleHeaderChange("PO No", e.target.value),
-            allPONos, "poNos", setAllPONos, "PO No"
-          )}
-
-          {renderDropdown(
-            "Equipment",
-            headerData["Equipment"],
-            (e) => handleHeaderChange("Equipment", e.target.value),
-            allEquipments, "equipments", setAllEquipments, "Equipment"
-          )}
-
-          {/* Weight f. Order - user entered */}
+          {renderAutocomplete("PO No", headerData["PO No"], (e) => handleHeaderChange("PO No", e.target.value), allPONos, "poNos", setAllPONos, "PO No")}
+          {renderAutocomplete("Equipment", headerData["Equipment"], (e) => handleHeaderChange("Equipment", e.target.value), allEquipments, "equipments", setAllEquipments, "Equipment")}
           <div className="entry-input">
             <label>Weight f. Order (KG) - Entered</label>
-            <input
-              type="number"
-              step="0.001"
-              value={weightFOrderEntered}
-              onChange={(e) => setWeightFOrderEntered(e.target.value)}
-              placeholder="Enter expected weight"
-            />
+            <input type="number" step="0.001" value={weightFOrderEntered} onChange={(e) => setWeightFOrderEntered(e.target.value)} placeholder="Enter expected weight" />
           </div>
-
-          {renderDropdown(
-            "Part Name",
-            headerData["Part Name"],
-            (e) => handleHeaderChange("Part Name", e.target.value),
-            allPartNames, "partNames", setAllPartNames, "Part Name"
-          )}
-
-          {renderDropdown(
-            "Drawing Number",
-            headerData["Drawing Number"],
-            (e) => handleHeaderChange("Drawing Number", e.target.value),
-            allDrawingNumbers, "drawingNumbers", setAllDrawingNumbers, "Drawing Number"
-          )}
-
+          {renderAutocomplete("Part Name", headerData["Part Name"], (e) => handleHeaderChange("Part Name", e.target.value), allPartNames, "partNames", setAllPartNames, "Part Name")}
+          {renderAutocomplete("Drawing Number", headerData["Drawing Number"], (e) => handleHeaderChange("Drawing Number", e.target.value), allDrawingNumbers, "drawingNumbers", setAllDrawingNumbers, "Drawing Number")}
         </div>
 
         <hr />
@@ -518,62 +425,85 @@ export default function EntryPage() {
         {items.map((item, index) => (
           <div key={item.id} className="section-card">
             {items.length > 1 && (
-              <button
-                className="remove-row-btn"
-                onClick={() => removeRow(item.id)}
-                type="button"
-              >
+              <button className="remove-row-btn" onClick={() => removeRow(item.id)} type="button">
                 <HiTrash /> Remove
               </button>
             )}
             <h4>Row #{index + 1} — POS: {String(item.pos).padStart(3, "0")}</h4>
 
             <div className="section-grid">
-
               <div className="entry-input">
                 <label>Quantity</label>
-                <input
-                  type="number"
-                  value={item.quantity}
-                  onChange={(e) => handleItemChange(item.id, "quantity", e.target.value)}
-                />
+                <input type="number" value={item.quantity} onChange={(e) => handleItemChange(item.id, "quantity", e.target.value)} />
               </div>
 
-              {renderRowDropdown(item, "size", "Size", allSizes, "sizes", setAllSizes)}
-              {renderRowDropdown(item, "length", "Length", allLengths, "lengths", setAllLengths)}
-              {renderRowDropdown(item, "width", "Width", allWidths, "widths", setAllWidths)}
+              {/* Section (renamed from Size) */}
+              {renderRowAutocomplete(item, "section", "Section", allSections, "sections", setAllSections)}
+
+              {/* Thickness */}
+              {renderRowAutocomplete(item, "thickness", "Thickness (mm)", allThicknesses, "thicknesses", setAllThicknesses)}
+
+              {/* Length */}
+              {renderRowAutocomplete(item, "length", "Length (mm)", allLengths, "lengths", setAllLengths)}
+
+              {/* Width */}
+              {renderRowAutocomplete(item, "width", "Width (mm)", allWidths, "widths", setAllWidths)}
 
               <div className="entry-input">
                 <label>Single Weight (kg)</label>
-                <input
-                  type="number"
-                  step="0.001"
-                  value={item.singleWeight}
-                  onChange={(e) => handleItemChange(item.id, "singleWeight", e.target.value)}
-                />
+                <input type="number" step="0.001" value={item.singleWeight} onChange={(e) => handleItemChange(item.id, "singleWeight", e.target.value)} />
               </div>
 
-              {/* ── NEW: DRG Weight ── */}
+              {/* DRG Weight — auto: Qty × Single Wt */}
               <div className="entry-input">
-                <label>DRG Weight (kg)</label>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  DRG Weight (kg)
+                  <span style={{ fontSize: "11px", color: item.drgWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
+                    {item.drgWeightManual ? "✎ Manual" : ""}
+                  </span>
+                  {item.drgWeightManual && (
+                    <button type="button" onClick={() => resetDrgWeightAuto(item.id)}
+                      style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
+                      Reset
+                    </button>
+                  )}
+                </label>
                 <input
-                  type="number"
-                  step="0.001"
+                  type="number" step="0.001"
                   value={item.drgWeight}
                   onChange={(e) => handleItemChange(item.id, "drgWeight", e.target.value)}
+                  placeholder=""
+                  style={{ borderColor: item.drgWeightManual ? "#e67e22" : undefined }}
                 />
+                {!item.drgWeightManual && item.drgWeight !== "" && (
+                  <small style={{ color: "#888", fontSize: "10px" }}>= {parseNum(item.quantity)} × {parseNum(item.singleWeight)}</small>
+                )}
               </div>
 
+              {/* Calculated Weight — auto: L × W × T × Density × Qty / 1,000,000 */}
               <div className="entry-input">
-                <label>Calculated Weight (Kg)</label>
+                <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  Calculated Weight (kg)
+                  <span style={{ fontSize: "11px", color: item.calcWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
+                    {item.calcWeightManual ? "✎ Manual" : ""}
+                  </span>
+                  {item.calcWeightManual && (
+                    <button type="button" onClick={() => resetCalcWeightAuto(item.id)}
+                      style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
+                      Reset
+                    </button>
+                  )}
+                </label>
                 <input
-                  type="text"
-                  className="readonly-field"
+                  type="number" step="0.001"
                   value={formatNum(parseNum(item.totalWeight))}
-                  readOnly
+                  onChange={(e) => handleItemChange(item.id, "totalWeight", e.target.value)}
+                  style={{ borderColor: item.calcWeightManual ? "#e67e22" : undefined }}
                 />
+                {!item.calcWeightManual && (
+                  <small style={{ color: "#888", fontSize: "10px" }}>= {parseNum(item.length)} × {parseNum(item.width)} × {parseNum(item.thickness)} × {DENSITY} × {parseNum(item.quantity)} / 1,000,000</small>
+                )}
               </div>
-
             </div>
           </div>
         ))}
@@ -582,7 +512,6 @@ export default function EntryPage() {
           <HiPlus /> Add Another Row
         </button>
 
-        {/* Summary */}
         <div className="summary-box">
           <div className="summary-content">
             <div>
@@ -601,14 +530,9 @@ export default function EntryPage() {
           </div>
         </div>
 
-        <button
-          className="entry-submit"
-          onClick={handleSubmit}
-          disabled={loading}
-        >
+        <button className="entry-submit" onClick={handleSubmit} disabled={loading}>
           {loading ? "Saving..." : "Save Entry"}
         </button>
-
       </div>
     </div>
   );
