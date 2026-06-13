@@ -500,9 +500,6 @@ export default function EntryPage() {
                   onChange={(e) => handleItemChange(item.id, "totalWeight", e.target.value)}
                   style={{ borderColor: item.calcWeightManual ? "#e67e22" : undefined }}
                 />
-                {!item.calcWeightManual && (
-                  <small style={{ color: "#888", fontSize: "10px" }}>= {parseNum(item.length)} × {parseNum(item.width)} × {parseNum(item.thickness)} × {DENSITY} × {parseNum(item.quantity)} / 1,000,000</small>
-                )}
               </div>
             </div>
           </div>
