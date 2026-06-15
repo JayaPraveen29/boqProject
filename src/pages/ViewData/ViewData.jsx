@@ -128,7 +128,7 @@ export default function ViewData() {
   const formatNum = (v, decimals = 3) => {
     const n = parseFloat(v);
     if (isNaN(n)) return "";
-    return n.toFixed(decimals);
+    return n.toFixed(1);
   };
   const parseNum = (v) => parseFloat(v?.toString().replace(/,/g, "")) || 0;
 

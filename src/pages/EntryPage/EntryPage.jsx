@@ -475,9 +475,6 @@ export default function EntryPage() {
                   placeholder=""
                   style={{ borderColor: item.drgWeightManual ? "#e67e22" : undefined }}
                 />
-                {!item.drgWeightManual && item.drgWeight !== "" && (
-                  <small style={{ color: "#888", fontSize: "10px" }}>= {parseNum(item.quantity)} × {parseNum(item.singleWeight)}</small>
-                )}
               </div>
 
               {/* Calculated Weight — auto: L × W × T × Density × Qty / 1,000,000 */}

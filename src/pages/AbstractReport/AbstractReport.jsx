@@ -19,7 +19,6 @@ export default function AbstractReport() {
         const rows = [];
         snap.docs.forEach((d) => {
           const entry = d.data();
-
           if (entry.items && Array.isArray(entry.items)) {
             entry.items.forEach((item) => {
               const toNum = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
@@ -59,7 +58,6 @@ export default function AbstractReport() {
     return result;
   }, [data, searchPONo, searchPartName]);
 
-  // Section-wise: group by section + thickness combination
   const sectionData = useMemo(() => {
     const grouped = {};
     filteredRows.forEach((row) => {
@@ -86,7 +84,6 @@ export default function AbstractReport() {
     });
   }, [filteredRows]);
 
-  // Drawing-wise: group by drawing number
   const drawingData = useMemo(() => {
     const grouped = {};
     filteredRows.forEach((row) => {
@@ -120,7 +117,7 @@ export default function AbstractReport() {
     }
   }, [viewMode, sectionData, drawingData]);
 
-  const fmt3 = (v) => { const n = Number(v); return isNaN(n) ? "0.000" : n.toFixed(2); };
+  const fmt3 = (v) => { const n = Number(v); return isNaN(n) ? "0.000" : n.toFixed(1); };
   const fmtComma = (v) => { const n = Number(v); return isNaN(n) ? "0" : n.toLocaleString("en-IN", { maximumFractionDigits: 3 }); };
   const summaryLine = `PO No: ${searchPONo || "All"}    Description: ${searchPartName || "All"}`;
 
@@ -235,27 +232,44 @@ export default function AbstractReport() {
 
       <div className="filter-container">
         <div className="filter-row">
-          <label>PO No:</label>
-          <select className="filter-select" value={searchPONo} onChange={(e) => setSearchPONo(e.target.value)}>
-            <option value="">All PO Nos</option>
-            {poNoOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
 
-          <label>Description:</label>
-          <select className="filter-select" value={searchPartName} onChange={(e) => setSearchPartName(e.target.value)}>
-            <option value="">All Descriptions</option>
-            {partNameOptions.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-
-          <label>View By:</label>
-          <div className="toggle-group">
-            <button className={`toggle-btn ${viewMode === "section" ? "active" : ""}`} onClick={() => setViewMode("section")}>
-              Section-wise
-            </button>
-            <button className={`toggle-btn ${viewMode === "drawing" ? "active" : ""}`} onClick={() => setViewMode("drawing")}>
-              Drawing-wise
-            </button>
+          {/* PO No */}
+          <div className="filter-group">
+            <label>PO No:</label>
+            <select className="filter-select" value={searchPONo} onChange={(e) => setSearchPONo(e.target.value)}>
+              <option value="">All PO Nos</option>
+              {poNoOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
           </div>
+
+          {/* Description */}
+          <div className="filter-group">
+            <label>Description:</label>
+            <select className="filter-select" value={searchPartName} onChange={(e) => setSearchPartName(e.target.value)}>
+              <option value="">All Descriptions</option>
+              {partNameOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+
+          {/* View By toggle */}
+          <div className="filter-group">
+            <label>View By:</label>
+            <div className="toggle-group">
+              <button
+                className={`toggle-btn ${viewMode === "section" ? "active" : ""}`}
+                onClick={() => setViewMode("section")}
+              >
+                Section-wise
+              </button>
+              <button
+                className={`toggle-btn ${viewMode === "drawing" ? "active" : ""}`}
+                onClick={() => setViewMode("drawing")}
+              >
+                Drawing-wise
+              </button>
+            </div>
+          </div>
+
         </div>
 
         <div className="button-row">
@@ -293,7 +307,7 @@ export default function AbstractReport() {
             </thead>
             <tbody>
               {sectionData.length === 0 ? (
-                <tr><td colSpan={6} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
+                <tr><td colSpan={7} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
               ) : (
                 sectionData.map((row, i) => (
                   <tr key={`${row.section}-${row.thickness}`}>
