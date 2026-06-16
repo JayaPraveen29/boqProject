@@ -22,7 +22,7 @@ export default function ViewData() {
 
   const fields = [
     "pos", "drawingNumber", "partName", "quantity",
-    "section", "thickness", "length", "width",
+    "section", "size", "length", "width",
     "singleWeight", "drgWeight", "totalWeight", "difference",
   ];
 
@@ -32,7 +32,7 @@ export default function ViewData() {
     "partName": "Part Name",
     "quantity": "Qty",
     "section": "Section",
-    "thickness": "Thickness\n(mm)",
+    "size": "Size\n(mm)",           // renamed from thickness
     "length": "Length\n(mm)",
     "width": "Width\n(mm)",
     "singleWeight": "Single Wt\n(kg)",
@@ -42,11 +42,11 @@ export default function ViewData() {
   };
 
   const numericFields = new Set([
-    "quantity", "thickness", "length", "width", "singleWeight", "drgWeight", "totalWeight",
+    "quantity", "size", "length", "width", "singleWeight", "drgWeight", "totalWeight",
   ]);
 
   const editableFields = new Set([
-    "quantity", "section", "thickness", "length", "width", "singleWeight", "drgWeight", "totalWeight",
+    "quantity", "section", "size", "length", "width", "singleWeight", "drgWeight", "totalWeight",
   ]);
 
   const noTotalFields = new Set([
@@ -72,12 +72,15 @@ export default function ViewData() {
               pos: item.pos,
               quantity: item.quantity,
               section: item.section || item.size || item.designation || "",
-              thickness: item.thickness ?? 0,
+              // Support both old "thickness" field and new "size" field
+              size: item.size ?? item.thickness ?? 0,
               length: item.length,
               width: item.width,
+              sectionalWeight: item.sectionalWeight ?? 0,
               singleWeight: item.singleWeight,
               drgWeight: item.drgWeight ?? 0,
               totalWeight: item.totalWeight,
+              isPlate: item.isPlate !== undefined ? item.isPlate : true,
             });
           });
         }
@@ -125,7 +128,7 @@ export default function ViewData() {
     return t;
   }, [filteredData]);
 
-  const formatNum = (v, decimals = 3) => {
+  const formatNum = (v) => {
     const n = parseFloat(v);
     if (isNaN(n)) return "";
     return n.toFixed(1);
@@ -133,8 +136,13 @@ export default function ViewData() {
   const parseNum = (v) => parseFloat(v?.toString().replace(/,/g, "")) || 0;
 
   const autoDrgWeight = (ev) => parseNum(ev.quantity) * parseNum(ev.singleWeight);
-  const autoCalcWeight = (ev) =>
-    (parseNum(ev.length) * parseNum(ev.width) * parseNum(ev.thickness) * DENSITY * parseNum(ev.quantity)) / 1_000_000;
+  const autoCalcWeight = (ev) => {
+    if (ev.isPlate) {
+      return (parseNum(ev.length) * parseNum(ev.width) * parseNum(ev.size) * DENSITY * parseNum(ev.quantity)) / 1_000_000;
+    } else {
+      return (parseNum(ev.length) / 1000) * parseNum(ev.sectionalWeight) * parseNum(ev.quantity);
+    }
+  };
 
   const startEdit = (row) => {
     const key = `${row.firestoreId}-${row.itemIndex}`;
@@ -142,12 +150,14 @@ export default function ViewData() {
     setEditValues({
       quantity: row.quantity,
       section: row.section,
-      thickness: row.thickness ?? 0,
+      size: row.size ?? 0,
       length: row.length,
       width: row.width,
+      sectionalWeight: row.sectionalWeight ?? 0,
       singleWeight: row.singleWeight,
       drgWeight: row.drgWeight ?? 0,
       totalWeight: row.totalWeight,
+      isPlate: row.isPlate,
     });
     setEditManual({ drgWeight: false, totalWeight: false });
   };
@@ -168,7 +178,10 @@ export default function ViewData() {
       }
       if (field === "totalWeight") {
         setEditManual((m) => ({ ...m, totalWeight: true }));
-      } else if ((field === "length" || field === "width" || field === "thickness" || field === "quantity") && !editManual.totalWeight) {
+      } else if (
+        (field === "length" || field === "width" || field === "size" || field === "quantity" || field === "sectionalWeight") &&
+        !editManual.totalWeight
+      ) {
         updated.totalWeight = autoCalcWeight(updated);
       }
       return updated;
@@ -198,21 +211,27 @@ export default function ViewData() {
         const sw = parseNum(editValues.singleWeight);
         const l = parseNum(editValues.length);
         const w = parseNum(editValues.width);
-        const t = parseNum(editValues.thickness);
+        const s = parseNum(editValues.size);
+        const secWt = parseNum(editValues.sectionalWeight);
+        const isPlate = editValues.isPlate;
         const drgWt = editManual.drgWeight ? parseNum(editValues.drgWeight) : qty * sw;
         const calcWt = editManual.totalWeight
           ? parseNum(editValues.totalWeight)
-          : (l * w * t * DENSITY * qty) / 1_000_000;
+          : isPlate
+            ? (l * w * s * DENSITY * qty) / 1_000_000
+            : (l / 1000) * secWt * qty;
         return {
           ...item,
           quantity: qty,
           section: editValues.section,
-          thickness: t,
+          size: s,
           length: l,
           width: w,
+          sectionalWeight: secWt,
           singleWeight: sw,
           drgWeight: drgWt,
           totalWeight: calcWt,
+          isPlate,
         };
       });
 
@@ -461,8 +480,6 @@ export default function ViewData() {
                       }
 
                       if (f === "difference") {
-                        // diff > 0: DRG > Calc (over-estimated) → red + arrow up
-                        // diff < 0: DRG < Calc (under-estimated) → green + arrow down
                         const diffClass = Math.abs(diff) < 0.001 ? "" : diff > 0 ? "diff-negative" : "diff-positive";
                         const arrow = diff < 0 ? "▲" : "▼";
                         return (

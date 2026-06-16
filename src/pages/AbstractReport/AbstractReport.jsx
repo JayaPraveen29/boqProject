@@ -11,6 +11,8 @@ export default function AbstractReport() {
   const [searchPONo, setSearchPONo] = useState("");
   const [searchPartName, setSearchPartName] = useState("");
   const [viewMode, setViewMode] = useState("section");
+  // Drawing-wise: which drawing rows are expanded to show section breakdown
+  const [expandedDrawings, setExpandedDrawings] = useState(new Set());
 
   useEffect(() => {
     async function fetchData() {
@@ -30,12 +32,15 @@ export default function AbstractReport() {
                 pos: item.pos,
                 quantity: toNum(item.quantity),
                 section: (item.section || item.size || item.designation || "").toString().trim(),
-                thickness: toNum(item.thickness),
+                // Support both old "thickness" and new "size"
+                size: toNum(item.size ?? item.thickness ?? 0),
                 length: toNum(item.length),
                 width: toNum(item.width),
+                sectionalWeight: toNum(item.sectionalWeight ?? 0),
                 singleWeight: toNum(item.singleWeight),
                 drgWeight: toNum(item.drgWeight),
                 totalWeight: toNum(item.totalWeight),
+                isPlate: item.isPlate !== undefined ? item.isPlate : true,
               });
             });
           }
@@ -58,14 +63,15 @@ export default function AbstractReport() {
     return result;
   }, [data, searchPONo, searchPartName]);
 
+  // Section-wise aggregation (grouped by section + size)
   const sectionData = useMemo(() => {
     const grouped = {};
     filteredRows.forEach((row) => {
-      const key = `${row.section || "Unknown"}__${row.thickness || 0}`;
+      const key = `${row.section || "Unknown"}__${row.size || 0}`;
       if (!grouped[key]) {
         grouped[key] = {
           section: row.section || "Unknown",
-          thickness: row.thickness || 0,
+          size: row.size || 0,
           totalQty: 0,
           drgWeight: 0,
           totalWeight: 0,
@@ -80,10 +86,11 @@ export default function AbstractReport() {
     return Object.values(grouped).sort((a, b) => {
       const sectionCmp = a.section.localeCompare(b.section);
       if (sectionCmp !== 0) return sectionCmp;
-      return a.thickness - b.thickness;
+      return a.size - b.size;
     });
   }, [filteredRows]);
 
+  // Drawing-wise aggregation (with nested section breakdown)
   const drawingData = useMemo(() => {
     const grouped = {};
     filteredRows.forEach((row) => {
@@ -94,12 +101,40 @@ export default function AbstractReport() {
           partName: row.partName,
           drgWeight: 0,
           totalWeight: 0,
+          sections: {},
         };
       }
       grouped[key].drgWeight += row.drgWeight;
       grouped[key].totalWeight += row.totalWeight;
+
+      // Section breakdown within this drawing
+      const secKey = `${row.section || "Unknown"}__${row.size || 0}`;
+      if (!grouped[key].sections[secKey]) {
+        grouped[key].sections[secKey] = {
+          section: row.section || "Unknown",
+          size: row.size || 0,
+          totalQty: 0,
+          drgWeight: 0,
+          totalWeight: 0,
+          entries: 0,
+        };
+      }
+      grouped[key].sections[secKey].totalQty += row.quantity;
+      grouped[key].sections[secKey].drgWeight += row.drgWeight;
+      grouped[key].sections[secKey].totalWeight += row.totalWeight;
+      grouped[key].sections[secKey].entries += 1;
     });
-    return Object.values(grouped).sort((a, b) => a.drawingNumber.localeCompare(b.drawingNumber));
+
+    return Object.values(grouped)
+      .sort((a, b) => a.drawingNumber.localeCompare(b.drawingNumber))
+      .map((d) => ({
+        ...d,
+        sections: Object.values(d.sections).sort((a, b) => {
+          const cmp = a.section.localeCompare(b.section);
+          if (cmp !== 0) return cmp;
+          return a.size - b.size;
+        }),
+      }));
   }, [filteredRows]);
 
   const grandTotals = useMemo(() => {
@@ -117,9 +152,21 @@ export default function AbstractReport() {
     }
   }, [viewMode, sectionData, drawingData]);
 
-  const fmt3 = (v) => { const n = Number(v); return isNaN(n) ? "0.000" : n.toFixed(1); };
+  const fmt3 = (v) => { const n = Number(v); return isNaN(n) ? "0.0" : n.toFixed(1); };
   const fmtComma = (v) => { const n = Number(v); return isNaN(n) ? "0" : n.toLocaleString("en-IN", { maximumFractionDigits: 3 }); };
   const summaryLine = `PO No: ${searchPONo || "All"}    Description: ${searchPartName || "All"}`;
+
+  const toggleDrawing = (drawingNumber) => {
+    setExpandedDrawings((prev) => {
+      const next = new Set(prev);
+      if (next.has(drawingNumber)) next.delete(drawingNumber);
+      else next.add(drawingNumber);
+      return next;
+    });
+  };
+
+  const expandAll = () => setExpandedDrawings(new Set(drawingData.map((d) => d.drawingNumber)));
+  const collapseAll = () => setExpandedDrawings(new Set());
 
   const exportPDF = () => {
     const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -133,19 +180,17 @@ export default function AbstractReport() {
 
     if (viewMode === "section") {
       const body = sectionData.map((row, i) => [
-        i + 1, row.section, fmt3(row.thickness), row.entries, fmt3(row.totalQty), fmt3(row.drgWeight), fmt3(row.totalWeight),
+        i + 1, row.section, fmt3(row.size), row.entries, fmt3(row.totalQty), fmt3(row.drgWeight), fmt3(row.totalWeight),
       ]);
       body.push([
-        "",
-        { content: "TOTAL", styles: { fontStyle: "bold", halign: "left" } },
-        "", "",
+        "", { content: "TOTAL", styles: { fontStyle: "bold", halign: "left" } }, "", "",
         { content: fmt3(grandTotals.totalQty), styles: { fontStyle: "bold", halign: "right" } },
         { content: fmt3(grandTotals.drgWeight), styles: { fontStyle: "bold", halign: "right" } },
         { content: fmt3(grandTotals.totalWeight), styles: { fontStyle: "bold", halign: "right" } },
       ]);
       autoTable(doc, {
         startY: 80,
-        head: [["S.No", "Section", "Thickness (mm)", "No. of Items", "Total Qty", "Drg Weight (Kg)", "Calc. Weight (kg)"]],
+        head: [["S.No", "Section", "Size (mm)", "No. of Items", "Total Qty", "Drg Weight (Kg)", "Calc. Weight (kg)"]],
         body,
         theme: "grid",
         styles: { fontSize: 8, cellPadding: 3 },
@@ -161,28 +206,46 @@ export default function AbstractReport() {
         },
       });
     } else {
-      const body = drawingData.map((row, i) => [
-        i + 1, row.drawingNumber, row.partName,
-        fmt3(row.drgWeight), fmt3(row.totalWeight),
-        fmt3(Math.abs(row.drgWeight - row.totalWeight)),
-      ]);
+      // Drawing-wise with section breakdown
+      const body = [];
+      drawingData.forEach((row, i) => {
+        body.push([
+          { content: i + 1, styles: { fontStyle: "bold" } },
+          { content: row.drawingNumber, styles: { fontStyle: "bold" } },
+          { content: row.partName, styles: { fontStyle: "bold" } },
+          { content: fmt3(row.drgWeight), styles: { fontStyle: "bold", halign: "right" } },
+          { content: fmt3(row.totalWeight), styles: { fontStyle: "bold", halign: "right" } },
+          { content: fmt3(Math.abs(row.drgWeight - row.totalWeight)), styles: { fontStyle: "bold", halign: "right" } },
+          { content: "", styles: {} },
+        ]);
+        // Section breakdown rows
+        row.sections.forEach((sec, si) => {
+          body.push([
+            "",
+            { content: `  ${si + 1}.`, styles: { textColor: [100, 100, 100] } },
+            { content: sec.section, styles: { textColor: [100, 100, 100] } },
+            { content: fmt3(sec.drgWeight), styles: { halign: "right", textColor: [100, 100, 100] } },
+            { content: fmt3(sec.totalWeight), styles: { halign: "right", textColor: [100, 100, 100] } },
+            "",
+            { content: `Size: ${fmt3(sec.size)} | Qty: ${fmt3(sec.totalQty)}`, styles: { textColor: [100, 100, 100], fontSize: 7 } },
+          ]);
+        });
+      });
       body.push([
-        "",
-        { content: "TOTAL", styles: { fontStyle: "bold", halign: "left" } },
-        "",
+        "", { content: "TOTAL", styles: { fontStyle: "bold", halign: "left" } }, "",
         { content: fmt3(grandTotals.drgWeight), styles: { fontStyle: "bold", halign: "right" } },
         { content: fmt3(grandTotals.totalWeight), styles: { fontStyle: "bold", halign: "right" } },
-        "",
+        "", "",
       ]);
       autoTable(doc, {
         startY: 80,
-        head: [["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]],
+        head: [["S.No", "Drawing No", "Part Name / Section", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference", "Details"]],
         body,
         theme: "grid",
-        styles: { fontSize: 8, cellPadding: 3 },
+        styles: { fontSize: 7.5, cellPadding: 3 },
         headStyles: { fontStyle: "bold" },
         columnStyles: {
-          0: { halign: "center", cellWidth: 30 },
+          0: { halign: "center", cellWidth: 28 },
           1: { halign: "left" },
           2: { halign: "left" },
           3: { halign: "right" },
@@ -203,22 +266,27 @@ export default function AbstractReport() {
     wsData.push([]);
 
     if (viewMode === "section") {
-      wsData.push(["S.No", "Section", "Thickness (mm)", "No. of Items", "Total Qty", "Drg Weight (Kg)", "Calc. Weight (kg)"]);
+      wsData.push(["S.No", "Section", "Size (mm)", "No. of Items", "Total Qty", "Drg Weight (Kg)", "Calc. Weight (kg)"]);
       sectionData.forEach((row, i) => {
-        wsData.push([i + 1, row.section, Number(fmt3(row.thickness)), row.entries, Number(fmt3(row.totalQty)), Number(fmt3(row.drgWeight)), Number(fmt3(row.totalWeight))]);
+        wsData.push([i + 1, row.section, Number(fmt3(row.size)), row.entries, Number(fmt3(row.totalQty)), Number(fmt3(row.drgWeight)), Number(fmt3(row.totalWeight))]);
       });
       wsData.push(["TOTAL", "", "", "", Number(fmt3(grandTotals.totalQty)), Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight))]);
     } else {
-      wsData.push(["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]);
+      wsData.push(["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference", "Section", "Size (mm)", "Total Qty", "Sec Drg Wt", "Sec Calc Wt"]);
       drawingData.forEach((row, i) => {
         const diff = Math.abs(row.drgWeight - row.totalWeight);
-        wsData.push([i + 1, row.drawingNumber, row.partName, Number(fmt3(row.drgWeight)), Number(fmt3(row.totalWeight)), Number(fmt3(diff))]);
+        // Main drawing row
+        wsData.push([i + 1, row.drawingNumber, row.partName, Number(fmt3(row.drgWeight)), Number(fmt3(row.totalWeight)), Number(fmt3(diff)), "", "", "", "", ""]);
+        // Section breakdown
+        row.sections.forEach((sec) => {
+          wsData.push(["", "", `  ↳ ${sec.section}`, "", "", "", sec.section, Number(fmt3(sec.size)), Number(fmt3(sec.totalQty)), Number(fmt3(sec.drgWeight)), Number(fmt3(sec.totalWeight))]);
+        });
       });
-      wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight)), ""]);
+      wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight)), "", "", "", "", "", ""]);
     }
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws["!cols"] = Array(6).fill({ wch: 20 });
+    ws["!cols"] = Array(11).fill({ wch: 18 });
     XLSX.utils.book_append_sheet(wb, ws, "Abstract Report");
     XLSX.writeFile(wb, "Abstract_Report_BOQ.xlsx");
   };
@@ -232,8 +300,6 @@ export default function AbstractReport() {
 
       <div className="filter-container">
         <div className="filter-row">
-
-          {/* PO No */}
           <div className="filter-group">
             <label>PO No:</label>
             <select className="filter-select" value={searchPONo} onChange={(e) => setSearchPONo(e.target.value)}>
@@ -241,8 +307,6 @@ export default function AbstractReport() {
               {poNoOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-
-          {/* Description */}
           <div className="filter-group">
             <label>Description:</label>
             <select className="filter-select" value={searchPartName} onChange={(e) => setSearchPartName(e.target.value)}>
@@ -250,26 +314,18 @@ export default function AbstractReport() {
               {partNameOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
-
-          {/* View By toggle */}
           <div className="filter-group">
             <label>View By:</label>
             <div className="toggle-group">
-              <button
-                className={`toggle-btn ${viewMode === "section" ? "active" : ""}`}
-                onClick={() => setViewMode("section")}
-              >
+              <button className={`toggle-btn ${viewMode === "section" ? "active" : ""}`} onClick={() => setViewMode("section")}>
                 Section-wise
               </button>
-              <button
-                className={`toggle-btn ${viewMode === "drawing" ? "active" : ""}`}
-                onClick={() => setViewMode("drawing")}
-              >
+              <button className={`toggle-btn ${viewMode === "drawing" ? "active" : ""}`} onClick={() => setViewMode("drawing")}>
                 Drawing-wise
               </button>
             </div>
           </div>
-
+          
         </div>
 
         <div className="button-row">
@@ -298,7 +354,7 @@ export default function AbstractReport() {
               <tr>
                 <th>S.No</th>
                 <th>Section</th>
-                <th>Thickness (mm)</th>
+                <th>Size (mm)</th>
                 <th>No. of Items</th>
                 <th>Total Qty</th>
                 <th>Drg Weight (Kg)</th>
@@ -310,10 +366,10 @@ export default function AbstractReport() {
                 <tr><td colSpan={7} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
               ) : (
                 sectionData.map((row, i) => (
-                  <tr key={`${row.section}-${row.thickness}`}>
+                  <tr key={`${row.section}-${row.size}`}>
                     <td>{i + 1}</td>
                     <td className="text-left">{row.section}</td>
-                    <td className="numeric-cell">{fmt3(row.thickness)}</td>
+                    <td className="numeric-cell">{fmt3(row.size)}</td>
                     <td>{row.entries}</td>
                     <td className="numeric-cell">{fmt3(row.totalQty)}</td>
                     <td className="numeric-cell">{fmt3(row.drgWeight)}</td>
@@ -333,11 +389,12 @@ export default function AbstractReport() {
           <table className="abstract-table">
             <thead>
               <tr>
-                <th colSpan={6} className="table-title">
+                <th colSpan={7} className="table-title">
                   Drawing-wise Abstract{searchPONo && ` — PO: ${searchPONo}`}{searchPartName && ` (${searchPartName})`}
                 </th>
               </tr>
               <tr>
+                <th style={{ width: "36px" }}></th>
                 <th>S.No</th>
                 <th>Drawing No</th>
                 <th>Part Name</th>
@@ -348,29 +405,56 @@ export default function AbstractReport() {
             </thead>
             <tbody>
               {drawingData.length === 0 ? (
-                <tr><td colSpan={6} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
+                <tr><td colSpan={7} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
               ) : (
                 drawingData.map((row, i) => {
                   const diff = row.drgWeight - row.totalWeight;
                   const diffClass = Math.abs(diff) < 0.1 ? "" : diff > 0 ? "diff-over" : "diff-under";
+                  const isExpanded = expandedDrawings.has(row.drawingNumber);
+
                   return (
-                    <tr key={row.drawingNumber}>
-                      <td>{i + 1}</td>
-                      <td className="text-left">{row.drawingNumber}</td>
-                      <td className="text-left">{row.partName}</td>
-                      <td className="numeric-cell">{fmt3(row.drgWeight)}</td>
-                      <td className="numeric-cell">{fmt3(row.totalWeight)}</td>
-                      <td className={`numeric-cell ${diffClass}`}>
-                        {fmt3(Math.abs(diff))}
-                        {Math.abs(diff) >= 0.1 && (
-                          <span className="diff-indicator">{diff > 0 ? "▼" : "▲"}</span>
-                        )}
-                      </td>
-                    </tr>
+                    <>
+                      {/* Main drawing row */}
+                      <tr key={row.drawingNumber} style={{ background: "#f8f9fa", cursor: "pointer" }} onClick={() => toggleDrawing(row.drawingNumber)}>
+                        <td style={{ textAlign: "center", fontSize: "13px", color: "#2980b9", userSelect: "none" }}>
+                          {isExpanded ? "▼" : "▶"}
+                        </td>
+                        <td style={{ fontWeight: 600 }}>{i + 1}</td>
+                        <td className="text-left" style={{ fontWeight: 600 }}>{row.drawingNumber}</td>
+                        <td className="text-left" style={{ fontWeight: 600 }}>{row.partName}</td>
+                        <td className="numeric-cell" style={{ fontWeight: 600 }}>{fmt3(row.drgWeight)}</td>
+                        <td className="numeric-cell" style={{ fontWeight: 600 }}>{fmt3(row.totalWeight)}</td>
+                        <td className={`numeric-cell ${diffClass}`} style={{ fontWeight: 600 }}>
+                          {fmt3(Math.abs(diff))}
+                          {Math.abs(diff) >= 0.1 && (
+                            <span className="diff-indicator">{diff > 0 ? "▼" : "▲"}</span>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* Section breakdown sub-rows */}
+                      {isExpanded && row.sections.map((sec, si) => (
+                        <tr key={`${row.drawingNumber}-sec-${si}`} style={{ background: "#eef4fb" }}>
+                          <td></td>
+                          <td style={{ color: "#7f8c8d", fontSize: "12px", paddingLeft: "16px" }}>{si + 1}</td>
+                          <td style={{ color: "#555", fontSize: "12px", paddingLeft: "16px" }}>
+                            <span style={{ color: "#2980b9", marginRight: "6px" }}>↳</span>
+                            {sec.section}
+                          </td>
+                          <td style={{ color: "#888", fontSize: "11px" }}>
+                            Size: {fmt3(sec.size)} mm &nbsp;|&nbsp; Qty: {fmt3(sec.totalQty)} &nbsp;|&nbsp; Items: {sec.entries}
+                          </td>
+                          <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(sec.drgWeight)}</td>
+                          <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(sec.totalWeight)}</td>
+                          <td></td>
+                        </tr>
+                      ))}
+                    </>
                   );
                 })
               )}
               <tr className="total-row">
+                <td></td>
                 <td colSpan={3}>TOTAL</td>
                 <td className="numeric-cell">{fmt3(grandTotals.drgWeight)}</td>
                 <td className="numeric-cell">{fmt3(grandTotals.totalWeight)}</td>
@@ -380,6 +464,12 @@ export default function AbstractReport() {
           </table>
         )}
       </div>
+
+      <style>{`
+        .diff-over { color: #e74c3c; font-weight: 600; }
+        .diff-under { color: #27ae60; font-weight: 600; }
+        .diff-indicator { font-size: 10px; margin-left: 4px; }
+      `}</style>
     </div>
   );
 }

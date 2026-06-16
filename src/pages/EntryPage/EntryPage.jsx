@@ -25,8 +25,8 @@ export default function EntryPage() {
   const [allEquipments, setAllEquipments] = useState([]);
   const [allPartNames, setAllPartNames] = useState([]);
   const [allDrawingNumbers, setAllDrawingNumbers] = useState([]);
-  const [allSections, setAllSections] = useState([]);       // renamed from allSizes
-  const [allThicknesses, setAllThicknesses] = useState([]);
+  const [allSections, setAllSections] = useState([]);
+  const [allSizes, setAllSizes] = useState([]);         // renamed from allThicknesses
   const [allLengths, setAllLengths] = useState([]);
   const [allWidths, setAllWidths] = useState([]);
 
@@ -37,28 +37,33 @@ export default function EntryPage() {
     id: Date.now(),
     pos: 1,
     quantity: "",
-    section: "",           // renamed from size
-    thickness: "",
+    section: "",
+    size: "",             // renamed from thickness
     length: "",
     width: "",
+    sectionalWeight: "",  // new field
     singleWeight: "",
     drgWeight: "",
     drgWeightManual: false,
     calcWeightManual: false,
+    isPlate: true,        // determines which calc formula to use
     totalWeight: 0,
   }]);
 
   const [nextPos, setNextPos] = useState(1);
 
+  // Map of poNo -> weightFOrderEntered from existing entries
+  const [poWeightMap, setPoWeightMap] = useState({});
+
   const fetchMasterData = async () => {
     try {
-      const [poNoSnap, eqSnap, pnSnap, dnSnap, secSnap, thickSnap, lenSnap, widSnap] = await Promise.all([
+      const [poNoSnap, eqSnap, pnSnap, dnSnap, secSnap, sizeSnap, lenSnap, widSnap] = await Promise.all([
         getDocs(collection(db, "poNos")),
         getDocs(collection(db, "equipments")),
         getDocs(collection(db, "partNames")),
         getDocs(collection(db, "drawingNumbers")),
-        getDocs(collection(db, "sections")),       // renamed from sizes
-        getDocs(collection(db, "thicknesses")),
+        getDocs(collection(db, "sections")),
+        getDocs(collection(db, "thicknesses")),   // collection still named thicknesses in DB
         getDocs(collection(db, "lengths")),
         getDocs(collection(db, "widths")),
       ]);
@@ -74,9 +79,20 @@ export default function EntryPage() {
       setAllPartNames(map(pnSnap));
       setAllDrawingNumbers(map(dnSnap));
       setAllSections(map(secSnap));
-      setAllThicknesses(map(thickSnap));
+      setAllSizes(map(sizeSnap));
       setAllLengths(map(lenSnap));
       setAllWidths(map(widSnap));
+
+      // Build poNo -> weightFOrderEntered map from entries
+      const entriesSnap = await getDocs(collection(db, "entries"));
+      const weightMap = {};
+      entriesSnap.docs.forEach((d) => {
+        const entry = d.data();
+        if (entry.poNo && (entry.weightFOrderEntered !== undefined)) {
+          weightMap[entry.poNo] = entry.weightFOrderEntered;
+        }
+      });
+      setPoWeightMap(weightMap);
     } catch (error) {
       console.error("Error fetching master data:", error);
       alert("Error fetching data from Firebase");
@@ -106,6 +122,15 @@ export default function EntryPage() {
 
   useEffect(() => { fetchMasterData(); }, []);
   useEffect(() => { fetchNextPos(headerData["Drawing Number"]); }, [headerData["Drawing Number"]]);
+
+  // When PO No changes, auto-fill Weight f. Order if found
+  useEffect(() => {
+    const poNo = headerData["PO No"];
+    if (poNo && poWeightMap[poNo] !== undefined) {
+      setWeightFOrderEntered(String(poWeightMap[poNo]));
+    }
+  }, [headerData["PO No"], poWeightMap]);
+
   useEffect(() => {
     const total = items.reduce((sum, item) => sum + (parseFloat(item.totalWeight) || 0), 0);
     setWeightFOrderCalculated(total);
@@ -122,14 +147,21 @@ export default function EntryPage() {
     return (q * sw).toString();
   };
 
-  // Calculated Weight = Length × Width × Thickness × Density × Quantity / 1,000,000
-  const calcTotalWeight = (length, width, thickness, quantity) => {
+  // Plate: Length × Width × Size × Density × Quantity / 1,000,000
+  // Non-plate: (Length / 1000) × Sectional Weight × Quantity
+  const calcTotalWeight = (length, width, size, quantity, sectionalWeight, isPlate) => {
     const l = parseNum(length);
-    const w = parseNum(width);
-    const t = parseNum(thickness);
     const q = parseNum(quantity);
-    if (!l || !w || !t || !q) return 0;
-    return (l * w * t * DENSITY * q) / 1_000_000;
+    if (isPlate) {
+      const w = parseNum(width);
+      const s = parseNum(size);
+      if (!l || !w || !s || !q) return 0;
+      return (l * w * s * DENSITY * q) / 1_000_000;
+    } else {
+      const sw = parseNum(sectionalWeight);
+      if (!l || !sw || !q) return 0;
+      return (l / 1000) * sw * q;
+    }
   };
 
   const handleHeaderChange = (key, value) => {
@@ -151,8 +183,13 @@ export default function EntryPage() {
         if (key === "totalWeight") {
           updated.calcWeightManual = true;
           updated.totalWeight = parseNum(value);
-        } else if ((key === "length" || key === "width" || key === "thickness" || key === "quantity") && !updated.calcWeightManual) {
-          updated.totalWeight = calcTotalWeight(updated.length, updated.width, updated.thickness, updated.quantity);
+        } else if (
+          (key === "length" || key === "width" || key === "size" || key === "quantity" || key === "sectionalWeight" || key === "isPlate") &&
+          !updated.calcWeightManual
+        ) {
+          updated.totalWeight = calcTotalWeight(
+            updated.length, updated.width, updated.size, updated.quantity, updated.sectionalWeight, updated.isPlate
+          );
         }
 
         return updated;
@@ -173,7 +210,11 @@ export default function EntryPage() {
     setItems((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
-        return { ...item, calcWeightManual: false, totalWeight: calcTotalWeight(item.length, item.width, item.thickness, item.quantity) };
+        return {
+          ...item,
+          calcWeightManual: false,
+          totalWeight: calcTotalWeight(item.length, item.width, item.size, item.quantity, item.sectionalWeight, item.isPlate),
+        };
       })
     );
   };
@@ -187,13 +228,15 @@ export default function EntryPage() {
         pos: lastPos + 1,
         quantity: "",
         section: "",
-        thickness: "",
+        size: "",
         length: "",
         width: "",
+        sectionalWeight: "",
         singleWeight: "",
         drgWeight: "",
         drgWeightManual: false,
         calcWeightManual: false,
+        isPlate: true,
         totalWeight: 0,
       },
     ]);
@@ -207,7 +250,6 @@ export default function EntryPage() {
     });
   };
 
-  // Saves a new value to Firestore if it doesn't already exist (case-insensitive match)
   const saveValueIfNew = async (collectionName, value, options, setOptions) => {
     const trimmed = (value || "").trim();
     if (!trimmed) return;
@@ -235,7 +277,7 @@ export default function EntryPage() {
       if (["sections", "thicknesses", "lengths", "widths"].includes(collectionName)) {
         const itemKey =
           collectionName === "sections" ? "section" :
-          collectionName === "thicknesses" ? "thickness" :
+          collectionName === "thicknesses" ? "size" :
           collectionName === "lengths" ? "length" : "width";
         setItems((prev) =>
           prev.map((item) =>
@@ -249,7 +291,6 @@ export default function EntryPage() {
     }
   };
 
-  // Autocomplete field for header-level inputs (PO No, Equipment, Part Name, Drawing Number)
   const renderAutocomplete = (label, value, onChange, options, collectionName, setOptions, fieldKey = null) => {
     const fieldId = `header-${collectionName}`;
     const isActive = activeSuggestion === fieldId;
@@ -270,7 +311,6 @@ export default function EntryPage() {
             saveValueIfNew(collectionName, value, options, setOptions);
             setTimeout(() => setActiveSuggestion(null), 150);
           }}
-          placeholder={`Type or select ${label.toLowerCase()}`}
           autoComplete="off"
         />
         {isActive && filtered.length > 0 && (
@@ -305,7 +345,6 @@ export default function EntryPage() {
     );
   };
 
-  // Autocomplete field for per-row item inputs (Section, Thickness, Length, Width)
   const renderRowAutocomplete = (item, fieldKey, label, options, collectionName, setOptions) => {
     const fieldId = `${fieldKey}-${item.id}`;
     const isActive = activeSuggestion === fieldId;
@@ -327,7 +366,6 @@ export default function EntryPage() {
             saveValueIfNew(collectionName, value, options, setOptions);
             setTimeout(() => setActiveSuggestion(null), 150);
           }}
-          placeholder={`Type or select ${label.toLowerCase()}`}
           autoComplete="off"
         />
         {isActive && filtered.length > 0 && (
@@ -378,13 +416,15 @@ export default function EntryPage() {
         items: items.map((i) => ({
           pos: i.pos,
           quantity: parseNum(i.quantity),
-          section: i.section,          // renamed from size
-          thickness: parseNum(i.thickness),
+          section: i.section,
+          size: parseNum(i.size),        // renamed from thickness
           length: parseNum(i.length),
           width: parseNum(i.width),
+          sectionalWeight: parseNum(i.sectionalWeight),
           singleWeight: parseNum(i.singleWeight),
           drgWeight: parseNum(i.drgWeight),
           totalWeight: parseNum(i.totalWeight),
+          isPlate: i.isPlate,
         })),
         totalWeight: weightFOrderCalculated,
         createdAt: new Date(),
@@ -413,7 +453,7 @@ export default function EntryPage() {
           {renderAutocomplete("Equipment", headerData["Equipment"], (e) => handleHeaderChange("Equipment", e.target.value), allEquipments, "equipments", setAllEquipments, "Equipment")}
           <div className="entry-input">
             <label>Weight f. Order (KG) - Entered</label>
-            <input type="number" step="0.001" value={weightFOrderEntered} onChange={(e) => setWeightFOrderEntered(e.target.value)} placeholder="Enter expected weight" />
+            <input type="number" step="0.001" value={weightFOrderEntered} onChange={(e) => setWeightFOrderEntered(e.target.value)} />
           </div>
           {renderAutocomplete("Part Name", headerData["Part Name"], (e) => handleHeaderChange("Part Name", e.target.value), allPartNames, "partNames", setAllPartNames, "Part Name")}
           {renderAutocomplete("Drawing Number", headerData["Drawing Number"], (e) => handleHeaderChange("Drawing Number", e.target.value), allDrawingNumbers, "drawingNumbers", setAllDrawingNumbers, "Drawing Number")}
@@ -429,7 +469,39 @@ export default function EntryPage() {
                 <HiTrash /> Remove
               </button>
             )}
-            <h4>Row #{index + 1} — POS: {String(item.pos).padStart(3, "0")}</h4>
+            <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "8px" }}>
+              <h4 style={{ margin: 0 }}>Row #{index + 1} — POS: {String(item.pos).padStart(3, "0")}</h4>
+              {/* Plate / Non-Plate toggle */}
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#555" }}>Type:</span>
+                <button
+                  type="button"
+                  onClick={() => handleItemChange(item.id, "isPlate", true)}
+                  style={{
+                    padding: "3px 12px", fontSize: "12px", borderRadius: "4px", cursor: "pointer",
+                    background: item.isPlate ? "#2980b9" : "#eee",
+                    color: item.isPlate ? "#fff" : "#333",
+                    border: "1px solid " + (item.isPlate ? "#2980b9" : "#ccc"),
+                    fontWeight: item.isPlate ? 700 : 400,
+                  }}
+                >
+                  Plate
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleItemChange(item.id, "isPlate", false)}
+                  style={{
+                    padding: "3px 12px", fontSize: "12px", borderRadius: "4px", cursor: "pointer",
+                    background: !item.isPlate ? "#27ae60" : "#eee",
+                    color: !item.isPlate ? "#fff" : "#333",
+                    border: "1px solid " + (!item.isPlate ? "#27ae60" : "#ccc"),
+                    fontWeight: !item.isPlate ? 700 : 400,
+                  }}
+                >
+                  Section
+                </button>
+              </div>
+            </div>
 
             <div className="section-grid">
               <div className="entry-input">
@@ -437,11 +509,11 @@ export default function EntryPage() {
                 <input type="number" value={item.quantity} onChange={(e) => handleItemChange(item.id, "quantity", e.target.value)} />
               </div>
 
-              {/* Section (renamed from Size) */}
+              {/* Section */}
               {renderRowAutocomplete(item, "section", "Section", allSections, "sections", setAllSections)}
 
-              {/* Thickness */}
-              {renderRowAutocomplete(item, "thickness", "Thickness (mm)", allThicknesses, "thicknesses", setAllThicknesses)}
+              {/* Size (renamed from Thickness) */}
+              {renderRowAutocomplete(item, "size", "Size (mm)", allSizes, "thicknesses", setAllSizes)}
 
               {/* Length */}
               {renderRowAutocomplete(item, "length", "Length (mm)", allLengths, "lengths", setAllLengths)}
@@ -449,12 +521,22 @@ export default function EntryPage() {
               {/* Width */}
               {renderRowAutocomplete(item, "width", "Width (mm)", allWidths, "widths", setAllWidths)}
 
+              {/* Sectional Weight — new field */}
+              <div className="entry-input">
+                <label>Sectional Weight (kg/m)</label>
+                <input
+                  type="number" step="0.001"
+                  value={item.sectionalWeight}
+                  onChange={(e) => handleItemChange(item.id, "sectionalWeight", e.target.value)}
+                />
+              </div>
+
               <div className="entry-input">
                 <label>Single Weight (kg)</label>
                 <input type="number" step="0.001" value={item.singleWeight} onChange={(e) => handleItemChange(item.id, "singleWeight", e.target.value)} />
               </div>
 
-              {/* DRG Weight — auto: Qty × Single Wt */}
+              {/* DRG Weight */}
               <div className="entry-input">
                 <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                   DRG Weight (kg)
@@ -472,12 +554,11 @@ export default function EntryPage() {
                   type="number" step="0.001"
                   value={item.drgWeight}
                   onChange={(e) => handleItemChange(item.id, "drgWeight", e.target.value)}
-                  placeholder=""
                   style={{ borderColor: item.drgWeightManual ? "#e67e22" : undefined }}
                 />
               </div>
 
-              {/* Calculated Weight — auto: L × W × T × Density × Qty / 1,000,000 */}
+              {/* Calculated Weight */}
               <div className="entry-input">
                 <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                   Calculated Weight (kg)
