@@ -6,13 +6,13 @@ import {
 } from "firebase/firestore";
 import "./EntryPage.css";
 
-const DENSITY = 7.85; // g/cm³ for steel
+const DENSITY = 7.85;
 
 export default function EntryPage() {
   const [loading, setLoading] = useState(false);
 
   const [headerData, setHeaderData] = useState({
-    "PO No": "",
+    "POC No": "",
     "Equipment": "",
     "Part Name": "",
     "Drawing Number": "",
@@ -21,78 +21,99 @@ export default function EntryPage() {
   const [weightFOrderEntered, setWeightFOrderEntered] = useState("");
   const [weightFOrderCalculated, setWeightFOrderCalculated] = useState(0);
 
-  const [allPONos, setAllPONos] = useState([]);
-  const [allEquipments, setAllEquipments] = useState([]);
-  const [allPartNames, setAllPartNames] = useState([]);
+  const [allPOCNos, setAllPOCNos]               = useState([]);
+  const [allEquipments, setAllEquipments]         = useState([]);
+  const [allPartNames, setAllPartNames]           = useState([]);
   const [allDrawingNumbers, setAllDrawingNumbers] = useState([]);
-  const [allSections, setAllSections] = useState([]);
-  const [allSizes, setAllSizes] = useState([]);         // renamed from allThicknesses
-  const [allLengths, setAllLengths] = useState([]);
-  const [allWidths, setAllWidths] = useState([]);
+  const [allSections, setAllSections]             = useState([]);
+  const [allSizes, setAllSizes]                   = useState([]);
+  const [allLengths, setAllLengths]               = useState([]);
+  const [allWidths, setAllWidths]                 = useState([]);
 
-  // Tracks which field's suggestion dropdown is currently open
+  // Relation tables (same pattern as old project)
+  const [sectionSizeRelations, setSectionSizeRelations]           = useState([]); // { id, sectionId, sizeId }
+  const [sectionSizeLengthRelations, setSectionSizeLengthRelations] = useState([]); // { id, sectionId, sizeId, lengthId }
+  const [sectionSizeWidthRelations, setSectionSizeWidthRelations]   = useState([]); // { id, sectionId, sizeId, widthId }
+  const [sectionSectionalWeights, setSectionSectionalWeights]     = useState([]); // { id, sectionId, sectionalWeight }
+
   const [activeSuggestion, setActiveSuggestion] = useState(null);
+  const [customInputs, setCustomInputs]         = useState({});
 
   const [items, setItems] = useState([{
     id: Date.now(),
     pos: 1,
     quantity: "",
     section: "",
-    size: "",             // renamed from thickness
+    size: "",
     length: "",
     width: "",
-    sectionalWeight: "",  // new field
+    sectionalWeight: "",
+    unitWeight: "",
+    unitWeightManual: false,
     singleWeight: "",
     drgWeight: "",
     drgWeightManual: false,
     calcWeightManual: false,
-    isPlate: true,        // determines which calc formula to use
-    totalWeight: 0,
+    isPlate: true,
+    totalWeight: "",
   }]);
 
   const [nextPos, setNextPos] = useState(1);
+  const [pocWeightMap, setPocWeightMap] = useState({});
 
-  // Map of poNo -> weightFOrderEntered from existing entries
-  const [poWeightMap, setPoWeightMap] = useState({});
-
+  // ─── Fetch all master data + relation tables ───────────────────────────────
   const fetchMasterData = async () => {
     try {
-      const [poNoSnap, eqSnap, pnSnap, dnSnap, secSnap, sizeSnap, lenSnap, widSnap] = await Promise.all([
+      const [pocNoSnap, eqSnap, pnSnap, dnSnap, secSnap, sizeSnap, lenSnap, widSnap] = await Promise.all([
         getDocs(collection(db, "poNos")),
         getDocs(collection(db, "equipments")),
         getDocs(collection(db, "partNames")),
         getDocs(collection(db, "drawingNumbers")),
         getDocs(collection(db, "sections")),
-        getDocs(collection(db, "thicknesses")),   // collection still named thicknesses in DB
+        getDocs(collection(db, "thicknesses")),
         getDocs(collection(db, "lengths")),
         getDocs(collection(db, "widths")),
       ]);
 
-      const map = (snap) =>
+      const mapSnap = (snap) =>
         snap.docs
           .map((d) => ({ id: d.id, value: d.data().value?.trim() || "", isManual: true }))
           .filter((i) => i.value)
           .sort((a, b) => a.value.localeCompare(b.value));
 
-      setAllPONos(map(poNoSnap));
-      setAllEquipments(map(eqSnap));
-      setAllPartNames(map(pnSnap));
-      setAllDrawingNumbers(map(dnSnap));
-      setAllSections(map(secSnap));
-      setAllSizes(map(sizeSnap));
-      setAllLengths(map(lenSnap));
-      setAllWidths(map(widSnap));
+      setAllPOCNos(mapSnap(pocNoSnap));
+      setAllEquipments(mapSnap(eqSnap));
+      setAllPartNames(mapSnap(pnSnap));
+      setAllDrawingNumbers(mapSnap(dnSnap));
+      setAllSections(mapSnap(secSnap));
+      setAllSizes(mapSnap(sizeSnap));
+      setAllLengths(mapSnap(lenSnap));
+      setAllWidths(mapSnap(widSnap));
 
-      // Build poNo -> weightFOrderEntered map from entries
-      const entriesSnap = await getDocs(collection(db, "entries"));
+      // Fetch relation tables
+      const [ssRelSnap, sslRelSnap, sswRelSnap, swSnap, entriesSnap] = await Promise.all([
+        getDocs(collection(db, "sectionSizeRelations")),
+        getDocs(collection(db, "sectionSizeLengthRelations")),
+        getDocs(collection(db, "sectionSizeWidthRelations")),
+        getDocs(collection(db, "sectionSectionalWeights")),
+        getDocs(collection(db, "entries")),
+      ]);
+
+      setSectionSizeRelations(ssRelSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSectionSizeLengthRelations(sslRelSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSectionSizeWidthRelations(sswRelSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setSectionSectionalWeights(swSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      // Build pocNo -> weightFOrderEntered map
       const weightMap = {};
       entriesSnap.docs.forEach((d) => {
         const entry = d.data();
-        if (entry.poNo && (entry.weightFOrderEntered !== undefined)) {
-          weightMap[entry.poNo] = entry.weightFOrderEntered;
+        const pocKey = entry.pocNo || entry.poNo;
+        if (pocKey && entry.weightFOrderEntered !== undefined) {
+          weightMap[pocKey] = entry.weightFOrderEntered;
         }
       });
-      setPoWeightMap(weightMap);
+      setPocWeightMap(weightMap);
     } catch (error) {
       console.error("Error fetching master data:", error);
       alert("Error fetching data from Firebase");
@@ -108,9 +129,7 @@ export default function EntryPage() {
       snap.docs.forEach((d) => {
         const data = d.data();
         if (data.drawingNumber === drawingNumber && data.items) {
-          data.items.forEach((item) => {
-            if (item.pos > maxPos) maxPos = item.pos;
-          });
+          data.items.forEach((item) => { if (item.pos > maxPos) maxPos = item.pos; });
         }
       });
       setNextPos(maxPos + 1);
@@ -123,73 +142,249 @@ export default function EntryPage() {
   useEffect(() => { fetchMasterData(); }, []);
   useEffect(() => { fetchNextPos(headerData["Drawing Number"]); }, [headerData["Drawing Number"]]);
 
-  // When PO No changes, auto-fill Weight f. Order if found
   useEffect(() => {
-    const poNo = headerData["PO No"];
-    if (poNo && poWeightMap[poNo] !== undefined) {
-      setWeightFOrderEntered(String(poWeightMap[poNo]));
+    const pocNo = headerData["POC No"];
+    if (pocNo && pocWeightMap[pocNo] !== undefined) {
+      setWeightFOrderEntered(String(pocWeightMap[pocNo]));
     }
-  }, [headerData["PO No"], poWeightMap]);
+  }, [headerData["POC No"], pocWeightMap]);
 
   useEffect(() => {
     const total = items.reduce((sum, item) => sum + (parseFloat(item.totalWeight) || 0), 0);
     setWeightFOrderCalculated(total);
   }, [items]);
 
+  // ─── Relation helpers ──────────────────────────────────────────────────────
+
+  // Get sizes filtered by selected section using relation table
+  const getAvailableSizes = (selectedSection) => {
+    if (!selectedSection) return allSizes;
+    const sectionObj = allSections.find((s) => s.value === selectedSection);
+    if (!sectionObj) return allSizes;
+    const relatedSizeIds = sectionSizeRelations
+      .filter((rel) => rel.sectionId === sectionObj.id)
+      .map((rel) => rel.sizeId);
+    if (relatedSizeIds.length === 0) return allSizes; // no relations yet → show all
+    return allSizes.filter((s) => relatedSizeIds.includes(s.id));
+  };
+
+  // Get lengths filtered by section + size using relation table
+  const getAvailableLengths = (selectedSection, selectedSize) => {
+    if (!selectedSection || !selectedSize) return allLengths;
+    const sectionObj = allSections.find((s) => s.value === selectedSection);
+    const sizeObj    = allSizes.find((s) => s.value === selectedSize);
+    if (!sectionObj || !sizeObj) return allLengths;
+    const relatedLengthIds = sectionSizeLengthRelations
+      .filter((rel) => rel.sectionId === sectionObj.id && rel.sizeId === sizeObj.id)
+      .map((rel) => rel.lengthId);
+    if (relatedLengthIds.length === 0) return allLengths;
+    return allLengths.filter((l) => relatedLengthIds.includes(l.id));
+  };
+
+  // Get widths filtered by section + size using relation table
+  const getAvailableWidths = (selectedSection, selectedSize) => {
+    if (!selectedSection || !selectedSize) return allWidths;
+    const sectionObj = allSections.find((s) => s.value === selectedSection);
+    const sizeObj    = allSizes.find((s) => s.value === selectedSize);
+    if (!sectionObj || !sizeObj) return allWidths;
+    const relatedWidthIds = sectionSizeWidthRelations
+      .filter((rel) => rel.sectionId === sectionObj.id && rel.sizeId === sizeObj.id)
+      .map((rel) => rel.widthId);
+    if (relatedWidthIds.length === 0) return allWidths;
+    return allWidths.filter((w) => relatedWidthIds.includes(w.id));
+  };
+
+  // Get sectional weight for a section from relation table
+  const getSectionalWeightForSection = (selectedSection) => {
+    if (!selectedSection) return "";
+    const sectionObj = allSections.find((s) => s.value === selectedSection);
+    if (!sectionObj) return "";
+    const rel = sectionSectionalWeights.find((r) => r.sectionId === sectionObj.id);
+    return rel ? String(rel.sectionalWeight) : "";
+  };
+
+  // Save section-size relation if not already exists
+  const saveSectionSizeRelation = async (sectionValue, sizeValue) => {
+    if (!sectionValue?.trim() || !sizeValue?.trim()) return;
+    const sectionObj = allSections.find((s) => s.value === sectionValue);
+    const sizeObj    = allSizes.find((s) => s.value === sizeValue);
+    if (!sectionObj || !sizeObj) return;
+    const exists = sectionSizeRelations.find(
+      (r) => r.sectionId === sectionObj.id && r.sizeId === sizeObj.id
+    );
+    if (exists) return;
+    try {
+      const docRef = await addDoc(collection(db, "sectionSizeRelations"), {
+        sectionId: sectionObj.id,
+        sizeId: sizeObj.id,
+      });
+      setSectionSizeRelations((prev) => [...prev, { id: docRef.id, sectionId: sectionObj.id, sizeId: sizeObj.id }]);
+    } catch (e) {
+      console.error("Error saving section-size relation:", e);
+    }
+  };
+
+  // Save section-size-length relation if not already exists
+  const saveSectionSizeLengthRelation = async (sectionValue, sizeValue, lengthValue) => {
+    if (!sectionValue?.trim() || !sizeValue?.trim() || !lengthValue?.trim()) return;
+    const sectionObj = allSections.find((s) => s.value === sectionValue);
+    const sizeObj    = allSizes.find((s) => s.value === sizeValue);
+    const lengthObj  = allLengths.find((l) => l.value === lengthValue);
+    if (!sectionObj || !sizeObj || !lengthObj) return;
+    const exists = sectionSizeLengthRelations.find(
+      (r) => r.sectionId === sectionObj.id && r.sizeId === sizeObj.id && r.lengthId === lengthObj.id
+    );
+    if (exists) return;
+    try {
+      const docRef = await addDoc(collection(db, "sectionSizeLengthRelations"), {
+        sectionId: sectionObj.id, sizeId: sizeObj.id, lengthId: lengthObj.id,
+      });
+      setSectionSizeLengthRelations((prev) => [...prev, { id: docRef.id, sectionId: sectionObj.id, sizeId: sizeObj.id, lengthId: lengthObj.id }]);
+    } catch (e) {
+      console.error("Error saving section-size-length relation:", e);
+    }
+  };
+
+  // Save section-size-width relation if not already exists
+  const saveSectionSizeWidthRelation = async (sectionValue, sizeValue, widthValue) => {
+    if (!sectionValue?.trim() || !sizeValue?.trim() || !widthValue?.trim()) return;
+    const sectionObj = allSections.find((s) => s.value === sectionValue);
+    const sizeObj    = allSizes.find((s) => s.value === sizeValue);
+    const widthObj   = allWidths.find((w) => w.value === widthValue);
+    if (!sectionObj || !sizeObj || !widthObj) return;
+    const exists = sectionSizeWidthRelations.find(
+      (r) => r.sectionId === sectionObj.id && r.sizeId === sizeObj.id && r.widthId === widthObj.id
+    );
+    if (exists) return;
+    try {
+      const docRef = await addDoc(collection(db, "sectionSizeWidthRelations"), {
+        sectionId: sectionObj.id, sizeId: sizeObj.id, widthId: widthObj.id,
+      });
+      setSectionSizeWidthRelations((prev) => [...prev, { id: docRef.id, sectionId: sectionObj.id, sizeId: sizeObj.id, widthId: widthObj.id }]);
+    } catch (e) {
+      console.error("Error saving section-size-width relation:", e);
+    }
+  };
+
+  // Save / update sectional weight for a section
+  const saveSectionalWeight = async (sectionValue, weight) => {
+    if (!sectionValue?.trim() || !weight) return;
+    const sectionObj = allSections.find((s) => s.value === sectionValue);
+    if (!sectionObj) return;
+    const existing = sectionSectionalWeights.find((r) => r.sectionId === sectionObj.id);
+    try {
+      if (existing) {
+        // Update in place (delete + re-add to keep it simple without update import)
+        await deleteDoc(doc(db, "sectionSectionalWeights", existing.id));
+        const docRef = await addDoc(collection(db, "sectionSectionalWeights"), {
+          sectionId: sectionObj.id,
+          sectionalWeight: parseNum(weight),
+        });
+        setSectionSectionalWeights((prev) => [
+          ...prev.filter((r) => r.id !== existing.id),
+          { id: docRef.id, sectionId: sectionObj.id, sectionalWeight: parseNum(weight) },
+        ]);
+      } else {
+        const docRef = await addDoc(collection(db, "sectionSectionalWeights"), {
+          sectionId: sectionObj.id,
+          sectionalWeight: parseNum(weight),
+        });
+        setSectionSectionalWeights((prev) => [
+          ...prev,
+          { id: docRef.id, sectionId: sectionObj.id, sectionalWeight: parseNum(weight) },
+        ]);
+      }
+    } catch (e) {
+      console.error("Error saving sectional weight:", e);
+    }
+  };
+
+  // ─── Calculations ──────────────────────────────────────────────────────────
   const parseNum = (v) => parseFloat(v?.toString().replace(/,/g, "")) || 0;
   const formatNum = (n) =>
     n.toLocaleString("en-IN", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
   const calcDrgWeight = (quantity, singleWeight) => {
-    const q = parseNum(quantity);
-    const sw = parseNum(singleWeight);
+    const q = parseNum(quantity), sw = parseNum(singleWeight);
     if (!q || !sw) return "";
     return (q * sw).toString();
   };
 
-  // Plate: Length × Width × Size × Density × Quantity / 1,000,000
-  // Non-plate: (Length / 1000) × Sectional Weight × Quantity
-  const calcTotalWeight = (length, width, size, quantity, sectionalWeight, isPlate) => {
+  // Plate: size × 7.85 × length × width / 1,000,000  (kg)
+  // Section: length / 1000 × sectionalWeight           (kg)
+  const calcUnitWeight = (length, width, size, sectionalWeight, isPlate) => {
     const l = parseNum(length);
-    const q = parseNum(quantity);
     if (isPlate) {
-      const w = parseNum(width);
-      const s = parseNum(size);
-      if (!l || !w || !s || !q) return 0;
-      return (l * w * s * DENSITY * q) / 1_000_000;
+      const w = parseNum(width), s = parseNum(size);
+      if (!l || !w || !s) return 0;
+      return (s * DENSITY * l * w) / 1_000_000;
     } else {
       const sw = parseNum(sectionalWeight);
-      if (!l || !sw || !q) return 0;
-      return (l / 1000) * sw * q;
+      if (!l || !sw) return 0;
+      return (l / 1000) * sw;
     }
   };
 
-  const handleHeaderChange = (key, value) => {
-    setHeaderData((prev) => ({ ...prev, [key]: value }));
+  const calcTotalWeight = (length, width, size, quantity, sectionalWeight, isPlate) => {
+    const q = parseNum(quantity);
+    if (!q) return 0;
+    return calcUnitWeight(length, width, size, sectionalWeight, isPlate) * q;
   };
 
+  // ─── Item change handler ───────────────────────────────────────────────────
   const handleItemChange = (id, key, value) => {
     setItems((prev) =>
       prev.map((item) => {
         if (item.id !== id) return item;
-        const updated = { ...item, [key]: value };
+        let updated = { ...item, [key]: value };
 
+        // When section changes → auto-fill sectional weight + reset downstream
+        if (key === "section") {
+          const sw = getSectionalWeightForSection(value);
+          updated.sectionalWeight = sw;
+          updated.size = "";
+          updated.length = "";
+          updated.width = "";
+          updated.unitWeight = calcUnitWeight("", "", "", sw, updated.isPlate);
+          updated.totalWeight = calcTotalWeight("", "", "", updated.quantity, sw, updated.isPlate);
+        }
+        // When size changes → reset length and width
+        if (key === "size") {
+          updated.length = "";
+          updated.width = "";
+        }
+
+        // DRG weight
         if (key === "drgWeight") {
           updated.drgWeightManual = true;
         } else if ((key === "quantity" || key === "singleWeight") && !updated.drgWeightManual) {
           updated.drgWeight = calcDrgWeight(updated.quantity, updated.singleWeight);
         }
 
+        // Unit weight
+        if (key === "unitWeight") {
+          updated.unitWeightManual = true;
+        } else if (
+          ["length", "width", "size", "sectionalWeight", "isPlate"].includes(key) &&
+          !updated.unitWeightManual
+        ) {
+          updated.unitWeight = calcUnitWeight(updated.length, updated.width, updated.size, updated.sectionalWeight, updated.isPlate);
+        }
+
+        // Total weight
         if (key === "totalWeight") {
           updated.calcWeightManual = true;
           updated.totalWeight = parseNum(value);
         } else if (
-          (key === "length" || key === "width" || key === "size" || key === "quantity" || key === "sectionalWeight" || key === "isPlate") &&
+          ["length", "width", "size", "quantity", "sectionalWeight", "isPlate"].includes(key) &&
           !updated.calcWeightManual
         ) {
-          updated.totalWeight = calcTotalWeight(
-            updated.length, updated.width, updated.size, updated.quantity, updated.sectionalWeight, updated.isPlate
-          );
+          updated.totalWeight = calcTotalWeight(updated.length, updated.width, updated.size, updated.quantity, updated.sectionalWeight, updated.isPlate);
+        }
+
+        // Sync unit weight manual edit → total weight
+        if (key === "unitWeight" && !updated.calcWeightManual) {
+          updated.totalWeight = parseNum(value) * parseNum(updated.quantity);
         }
 
         return updated;
@@ -197,49 +392,35 @@ export default function EntryPage() {
     );
   };
 
+  const resetUnitWeightAuto = (id) => {
+    setItems((prev) => prev.map((item) => {
+      if (item.id !== id) return item;
+      return { ...item, unitWeightManual: false, unitWeight: calcUnitWeight(item.length, item.width, item.size, item.sectionalWeight, item.isPlate) };
+    }));
+  };
+
   const resetDrgWeightAuto = (id) => {
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        return { ...item, drgWeightManual: false, drgWeight: calcDrgWeight(item.quantity, item.singleWeight) };
-      })
-    );
+    setItems((prev) => prev.map((item) => {
+      if (item.id !== id) return item;
+      return { ...item, drgWeightManual: false, drgWeight: calcDrgWeight(item.quantity, item.singleWeight) };
+    }));
   };
 
   const resetCalcWeightAuto = (id) => {
-    setItems((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-        return {
-          ...item,
-          calcWeightManual: false,
-          totalWeight: calcTotalWeight(item.length, item.width, item.size, item.quantity, item.sectionalWeight, item.isPlate),
-        };
-      })
-    );
+    setItems((prev) => prev.map((item) => {
+      if (item.id !== id) return item;
+      return { ...item, calcWeightManual: false, totalWeight: calcTotalWeight(item.length, item.width, item.size, item.quantity, item.sectionalWeight, item.isPlate) };
+    }));
   };
 
   const addRow = () => {
     const lastPos = items.length > 0 ? items[items.length - 1].pos : nextPos - 1;
-    setItems((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        pos: lastPos + 1,
-        quantity: "",
-        section: "",
-        size: "",
-        length: "",
-        width: "",
-        sectionalWeight: "",
-        singleWeight: "",
-        drgWeight: "",
-        drgWeightManual: false,
-        calcWeightManual: false,
-        isPlate: true,
-        totalWeight: 0,
-      },
-    ]);
+    setItems((prev) => [...prev, {
+      id: Date.now(), pos: lastPos + 1, quantity: "", section: "", size: "",
+      length: "", width: "", sectionalWeight: "", unitWeight: "", unitWeightManual: false,
+      singleWeight: "", drgWeight: "", drgWeightManual: false, calcWeightManual: false,
+      isPlate: true, totalWeight: "",
+    }]);
   };
 
   const removeRow = (id) => {
@@ -248,6 +429,11 @@ export default function EntryPage() {
       const filtered = prev.filter((i) => i.id !== id);
       return filtered.map((item, idx) => ({ ...item, pos: nextPos + idx }));
     });
+  };
+
+  // ─── Autocomplete helpers ──────────────────────────────────────────────────
+  const handleHeaderChange = (key, value) => {
+    setHeaderData((prev) => ({ ...prev, [key]: value }));
   };
 
   const saveValueIfNew = async (collectionName, value, options, setOptions) => {
@@ -291,13 +477,24 @@ export default function EntryPage() {
     }
   };
 
+  // Custom input (add new value) state helpers
+  const toggleCustomInput = (rowId, type) => {
+    const key = `${rowId}-${type}`;
+    setCustomInputs((prev) => ({ ...prev, [key]: { show: !prev[key]?.show, value: prev[key]?.value || "" } }));
+  };
+  const setCustomValue = (rowId, type, value) => {
+    const key = `${rowId}-${type}`;
+    setCustomInputs((prev) => ({ ...prev, [key]: { ...prev[key], value } }));
+  };
+  const getCustomState = (rowId, type) => customInputs[`${rowId}-${type}`] || { show: false, value: "" };
+
+  // ─── Render autocomplete (header fields) ──────────────────────────────────
   const renderAutocomplete = (label, value, onChange, options, collectionName, setOptions, fieldKey = null) => {
     const fieldId = `header-${collectionName}`;
     const isActive = activeSuggestion === fieldId;
     const filtered = options.filter((o) =>
       o.value.toLowerCase().includes((value || "").toLowerCase())
     );
-
     return (
       <div className="entry-input" style={{ position: "relative" }}>
         <label>{label} ({options.length})</label>
@@ -317,24 +514,12 @@ export default function EntryPage() {
           <div className="suggestion-list">
             {filtered.map((opt) => (
               <div key={opt.id} className="suggestion-item">
-                <span
-                  className="suggestion-text"
-                  onMouseDown={() => {
-                    onChange({ target: { value: opt.value } });
-                    setActiveSuggestion(null);
-                  }}
-                >
+                <span className="suggestion-text" onMouseDown={() => { onChange({ target: { value: opt.value } }); setActiveSuggestion(null); }}>
                   {opt.value}
                 </span>
-                <button
-                  type="button"
-                  className="suggestion-delete"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleDeleteValue(collectionName, opt, setOptions, fieldKey);
-                  }}
-                  title={`Delete "${opt.value}"`}
-                >
+                <button type="button" className="suggestion-delete"
+                  onMouseDown={(e) => { e.preventDefault(); handleDeleteValue(collectionName, opt, setOptions, fieldKey); }}
+                  title={`Delete "${opt.value}"`}>
                   <HiTrash />
                 </button>
               </div>
@@ -345,71 +530,151 @@ export default function EntryPage() {
     );
   };
 
-  const renderRowAutocomplete = (item, fieldKey, label, options, collectionName, setOptions) => {
-    const fieldId = `${fieldKey}-${item.id}`;
-    const isActive = activeSuggestion === fieldId;
+  // ─── Render dropdown with +Add for item rows ───────────────────────────────
+  const renderRowDropdown = (item, fieldKey, label, options, collectionName, setOptions) => {
+    const customState = getCustomState(item.id, fieldKey);
     const value = item[fieldKey] || "";
-    const filtered = options.filter((o) =>
-      o.value.toLowerCase().includes(value.toLowerCase())
-    );
+
+    const handleAdd = async () => {
+      const trimmed = customState.value.trim();
+      if (!trimmed) { alert("Please enter a value!"); return; }
+
+      // Check if value already exists in options
+      const existing = options.find((o) => o.value.toLowerCase() === trimmed.toLowerCase());
+      if (existing) {
+        // Just select it
+        handleItemChange(item.id, fieldKey, existing.value);
+        // If size field, also link to section
+        if (fieldKey === "size" && item.section) {
+          await saveSectionSizeRelation(item.section, existing.value);
+        }
+        // If length field, link to section + size
+        if (fieldKey === "length" && item.section && item.size) {
+          await saveSectionSizeLengthRelation(item.section, item.size, existing.value);
+        }
+        // If width field, link to section + size
+        if (fieldKey === "width" && item.section && item.size) {
+          await saveSectionSizeWidthRelation(item.section, item.size, existing.value);
+        }
+        toggleCustomInput(item.id, fieldKey);
+        return;
+      }
+
+      try {
+        const docRef = await addDoc(collection(db, collectionName), { value: trimmed });
+        const newOpt = { id: docRef.id, value: trimmed, isManual: true };
+        setOptions((prev) => [...prev, newOpt].sort((a, b) => a.value.localeCompare(b.value)));
+        handleItemChange(item.id, fieldKey, trimmed);
+        // If size field, link new size to current section
+        if (fieldKey === "size" && item.section) {
+          const sectionObj = allSections.find((s) => s.value === item.section);
+          if (sectionObj) {
+            const relDocRef = await addDoc(collection(db, "sectionSizeRelations"), { sectionId: sectionObj.id, sizeId: docRef.id });
+            setSectionSizeRelations((prev) => [...prev, { id: relDocRef.id, sectionId: sectionObj.id, sizeId: docRef.id }]);
+          }
+        }
+        // If length field, link new length to current section + size
+        if (fieldKey === "length" && item.section && item.size) {
+          const sectionObj = allSections.find((s) => s.value === item.section);
+          const sizeObj    = allSizes.find((s) => s.value === item.size);
+          if (sectionObj && sizeObj) {
+            const relDocRef = await addDoc(collection(db, "sectionSizeLengthRelations"), { sectionId: sectionObj.id, sizeId: sizeObj.id, lengthId: docRef.id });
+            setSectionSizeLengthRelations((prev) => [...prev, { id: relDocRef.id, sectionId: sectionObj.id, sizeId: sizeObj.id, lengthId: docRef.id }]);
+          }
+        }
+        // If width field, link new width to current section + size
+        if (fieldKey === "width" && item.section && item.size) {
+          const sectionObj = allSections.find((s) => s.value === item.section);
+          const sizeObj    = allSizes.find((s) => s.value === item.size);
+          if (sectionObj && sizeObj) {
+            const relDocRef = await addDoc(collection(db, "sectionSizeWidthRelations"), { sectionId: sectionObj.id, sizeId: sizeObj.id, widthId: docRef.id });
+            setSectionSizeWidthRelations((prev) => [...prev, { id: relDocRef.id, sectionId: sectionObj.id, sizeId: sizeObj.id, widthId: docRef.id }]);
+          }
+        }
+        toggleCustomInput(item.id, fieldKey);
+      } catch (e) {
+        console.error(`Error adding ${fieldKey}:`, e);
+        alert(`Error adding value. Please try again.`);
+      }
+    };
 
     return (
-      <div className="entry-input" style={{ position: "relative", minWidth: "180px" }}>
+      <div className="entry-input">
         <label>{label} ({options.length})</label>
-        <input
-          type="text"
-          className="autocomplete-field"
-          value={value}
-          onChange={(e) => handleItemChange(item.id, fieldKey, e.target.value)}
-          onFocus={() => setActiveSuggestion(fieldId)}
-          onBlur={() => {
-            saveValueIfNew(collectionName, value, options, setOptions);
-            setTimeout(() => setActiveSuggestion(null), 150);
-          }}
-          autoComplete="off"
-        />
-        {isActive && filtered.length > 0 && (
-          <div className="suggestion-list">
-            {filtered.map((opt) => (
-              <div key={opt.id} className="suggestion-item">
-                <span
-                  className="suggestion-text"
-                  onMouseDown={() => {
-                    handleItemChange(item.id, fieldKey, opt.value);
-                    setActiveSuggestion(null);
-                  }}
-                >
-                  {opt.value}
-                </span>
-                <button
-                  type="button"
-                  className="suggestion-delete"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handleDeleteValue(collectionName, opt, setOptions, null);
-                  }}
-                  title={`Delete "${opt.value}"`}
-                >
-                  <HiTrash />
-                </button>
-              </div>
-            ))}
+        <div className="dropdown-container">
+          <div className="dropdown-row">
+            <select
+              className="dropdown-select"
+              value={value}
+              onChange={(e) => {
+                handleItemChange(item.id, fieldKey, e.target.value);
+                if (fieldKey === "size" && e.target.value && item.section) {
+                  saveSectionSizeRelation(item.section, e.target.value);
+                }
+                if (fieldKey === "length" && e.target.value && item.section && item.size) {
+                  saveSectionSizeLengthRelation(item.section, item.size, e.target.value);
+                }
+                if (fieldKey === "width" && e.target.value && item.section && item.size) {
+                  saveSectionSizeWidthRelation(item.section, item.size, e.target.value);
+                }
+              }}
+            >
+              <option value="">Select {label}</option>
+              {options.map((opt) => (
+                <option key={opt.id} value={opt.value}>{opt.value}</option>
+              ))}
+            </select>
+            <button className="btn-toggle-custom" type="button" onClick={() => toggleCustomInput(item.id, fieldKey)}>
+              {customState.show ? "✕" : "+"}
+            </button>
           </div>
-        )}
+          {customState.show && (
+            <div className="custom-input-section">
+              <div className="custom-input-row">
+                <input
+                  type="text"
+                  className="custom-input-field"
+                  value={customState.value}
+                  onChange={(e) => setCustomValue(item.id, fieldKey, e.target.value)}
+                  placeholder={`Enter new ${label.toLowerCase()}`}
+                  onKeyPress={(e) => { if (e.key === "Enter") handleAdd(); }}
+                />
+                <button className="btn-add-custom" type="button" onClick={handleAdd}>Add</button>
+              </div>
+              <div className="manual-values-list">
+                <div className="custom-values-header">Manually Created Values</div>
+                {options.filter((o) => o.isManual).length === 0 ? (
+                  <div className="no-manual-values">No manually created values yet</div>
+                ) : (
+                  options.filter((o) => o.isManual).map((opt) => (
+                    <div key={opt.id} className="manual-value-item">
+                      <span className="manual-value-text">{opt.value}</span>
+                      <button className="btn-delete-value" type="button"
+                        onClick={() => handleDeleteValue(collectionName, opt, setOptions, null)}>
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   };
 
+  // ─── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
-    if (!headerData["PO No"]) return alert("Please select PO No");
+    if (!headerData["POC No"]) return alert("Please select POC No");
     if (!headerData["Drawing Number"]) return alert("Please select Drawing Number");
     setLoading(true);
     try {
       const docData = {
-        poNo: headerData["PO No"],
+        pocNo: headerData["POC No"],
         equipment: headerData["Equipment"],
         weightFOrderEntered: parseNum(weightFOrderEntered),
-        weightFOrderCalculated: weightFOrderCalculated,
+        weightFOrderCalculated,
         weightFOrderDifference: parseNum(weightFOrderEntered) - weightFOrderCalculated,
         partName: headerData["Part Name"],
         drawingNumber: headerData["Drawing Number"],
@@ -417,10 +682,11 @@ export default function EntryPage() {
           pos: i.pos,
           quantity: parseNum(i.quantity),
           section: i.section,
-          size: parseNum(i.size),        // renamed from thickness
+          size: parseNum(i.size),
           length: parseNum(i.length),
           width: parseNum(i.width),
           sectionalWeight: parseNum(i.sectionalWeight),
+          unitWeight: parseNum(i.unitWeight),
           singleWeight: parseNum(i.singleWeight),
           drgWeight: parseNum(i.drgWeight),
           totalWeight: parseNum(i.totalWeight),
@@ -430,6 +696,23 @@ export default function EntryPage() {
         createdAt: new Date(),
       };
       await addDoc(collection(db, "entries"), docData);
+
+      // Persist relations for all items
+      for (const item of items) {
+        if (item.section && item.size) {
+          await saveSectionSizeRelation(item.section, item.size);
+        }
+        if (item.section && item.size && item.length) {
+          await saveSectionSizeLengthRelation(item.section, item.size, item.length);
+        }
+        if (item.section && item.size && item.width) {
+          await saveSectionSizeWidthRelation(item.section, item.size, item.width);
+        }
+        if (item.section && item.sectionalWeight) {
+          await saveSectionalWeight(item.section, item.sectionalWeight);
+        }
+      }
+
       alert("Entry saved successfully!");
       window.location.reload();
     } catch (e) {
@@ -442,6 +725,7 @@ export default function EntryPage() {
 
   const weightDifference = parseNum(weightFOrderEntered) - weightFOrderCalculated;
 
+  // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="entry-container">
       <h1 className="entry-heading">SIEC-BOQ Entry</h1>
@@ -449,7 +733,7 @@ export default function EntryPage() {
       <div className="form-wrapper">
         <h3>Project Details</h3>
         <div className="entry-grid">
-          {renderAutocomplete("PO No", headerData["PO No"], (e) => handleHeaderChange("PO No", e.target.value), allPONos, "poNos", setAllPONos, "PO No")}
+          {renderAutocomplete("POC No", headerData["POC No"], (e) => handleHeaderChange("POC No", e.target.value), allPOCNos, "poNos", setAllPOCNos, "POC No")}
           {renderAutocomplete("Equipment", headerData["Equipment"], (e) => handleHeaderChange("Equipment", e.target.value), allEquipments, "equipments", setAllEquipments, "Equipment")}
           <div className="entry-input">
             <label>Weight f. Order (KG) - Entered</label>
@@ -462,126 +746,154 @@ export default function EntryPage() {
         <hr />
         <h3>Parts / Items</h3>
 
-        {items.map((item, index) => (
-          <div key={item.id} className="section-card">
-            {items.length > 1 && (
-              <button className="remove-row-btn" onClick={() => removeRow(item.id)} type="button">
-                <HiTrash /> Remove
-              </button>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "8px" }}>
-              <h4 style={{ margin: 0 }}>Row #{index + 1} — POS: {String(item.pos).padStart(3, "0")}</h4>
-              {/* Plate / Non-Plate toggle */}
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <span style={{ fontSize: "13px", fontWeight: 600, color: "#555" }}>Type:</span>
-                <button
-                  type="button"
-                  onClick={() => handleItemChange(item.id, "isPlate", true)}
-                  style={{
-                    padding: "3px 12px", fontSize: "12px", borderRadius: "4px", cursor: "pointer",
-                    background: item.isPlate ? "#2980b9" : "#eee",
-                    color: item.isPlate ? "#fff" : "#333",
-                    border: "1px solid " + (item.isPlate ? "#2980b9" : "#ccc"),
-                    fontWeight: item.isPlate ? 700 : 400,
-                  }}
-                >
-                  Plate
+        {items.map((item, index) => {
+          const availableSizes   = getAvailableSizes(item.section);
+          const availableLengths = getAvailableLengths(item.section, item.size);
+          const availableWidths  = getAvailableWidths(item.section, item.size);
+
+          return (
+            <div key={item.id} className="section-card">
+              {items.length > 1 && (
+                <button className="remove-row-btn" onClick={() => removeRow(item.id)} type="button">
+                  <HiTrash /> Remove
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleItemChange(item.id, "isPlate", false)}
-                  style={{
-                    padding: "3px 12px", fontSize: "12px", borderRadius: "4px", cursor: "pointer",
-                    background: !item.isPlate ? "#27ae60" : "#eee",
-                    color: !item.isPlate ? "#fff" : "#333",
-                    border: "1px solid " + (!item.isPlate ? "#27ae60" : "#ccc"),
-                    fontWeight: !item.isPlate ? 700 : 400,
-                  }}
-                >
-                  Section
-                </button>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "8px" }}>
+                <h4 style={{ margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+                  Row #{index + 1} — POS:
+                  <input
+                    type="number"
+                    value={item.pos}
+                    onChange={(e) => setItems((prev) => prev.map((i) => i.id === item.id ? { ...i, pos: parseInt(e.target.value) || "" } : i))}
+                    style={{ width: "70px", padding: "3px 6px", fontSize: "14px", fontWeight: 600, border: "1px solid #ccc", borderRadius: "4px", textAlign: "center" }}
+                  />
+                </h4>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <span style={{ fontSize: "13px", fontWeight: 600, color: "#555" }}>Type:</span>
+                  <button type="button"
+                    onClick={() => handleItemChange(item.id, "isPlate", true)}
+                    style={{ padding: "3px 12px", fontSize: "12px", borderRadius: "4px", cursor: "pointer", background: item.isPlate ? "#2980b9" : "#eee", color: item.isPlate ? "#fff" : "#333", border: "1px solid " + (item.isPlate ? "#2980b9" : "#ccc"), fontWeight: item.isPlate ? 700 : 400 }}>
+                    Plate
+                  </button>
+                  <button type="button"
+                    onClick={() => handleItemChange(item.id, "isPlate", false)}
+                    style={{ padding: "3px 12px", fontSize: "12px", borderRadius: "4px", cursor: "pointer", background: !item.isPlate ? "#27ae60" : "#eee", color: !item.isPlate ? "#fff" : "#333", border: "1px solid " + (!item.isPlate ? "#27ae60" : "#ccc"), fontWeight: !item.isPlate ? 700 : 400 }}>
+                    Section
+                  </button>
+                </div>
+              </div>
+
+              <div className="section-grid">
+                <div className="entry-input">
+                  <label>Quantity</label>
+                  <input type="number" value={item.quantity} onChange={(e) => handleItemChange(item.id, "quantity", e.target.value)} />
+                </div>
+
+                {/* Section — plain autocomplete */}
+                {renderAutocomplete(
+                  "Section",
+                  item.section,
+                  (e) => handleItemChange(item.id, "section", e.target.value),
+                  allSections,
+                  "sections",
+                  setAllSections
+                )}
+
+                {/* Size — dropdown filtered by section via relation table */}
+                {renderRowDropdown(item, "size", "Size (mm)", availableSizes, "thicknesses", setAllSizes)}
+
+                {/* Length — filtered by section + size */}
+                {renderRowDropdown(item, "length", "Length (mm)", availableLengths, "lengths", setAllLengths)}
+
+                {/* Width — filtered by section + size */}
+                {renderRowDropdown(item, "width", "Width (mm)", availableWidths, "widths", setAllWidths)}
+
+                {/* Sectional Weight (kg/m) — auto-filled from relation table */}
+                <div className="entry-input">
+                  <label>Sectional Weight (kg/m)</label>
+                  <input
+                    type="number" step="0.001"
+                    value={item.sectionalWeight}
+                    onChange={(e) => handleItemChange(item.id, "sectionalWeight", e.target.value)}
+                    onBlur={() => {
+                      if (item.section?.trim() && item.sectionalWeight) {
+                        saveSectionalWeight(item.section, item.sectionalWeight);
+                      }
+                    }}
+                  />
+                </div>
+
+                {/* Single Weight */}
+                <div className="entry-input">
+                  <label>Single Weight (kg)</label>
+                  <input type="number" step="0.001" value={item.singleWeight} onChange={(e) => handleItemChange(item.id, "singleWeight", e.target.value)} />
+                </div>
+
+                {/* DRG Weight */}
+                <div className="entry-input">
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    DRG Weight (kg)
+                    <span style={{ fontSize: "11px", color: item.drgWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
+                      {item.drgWeightManual ? "✎ Manual" : ""}
+                    </span>
+                    {item.drgWeightManual && (
+                      <button type="button" onClick={() => resetDrgWeightAuto(item.id)}
+                        style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
+                        Reset
+                      </button>
+                    )}
+                  </label>
+                  <input type="number" step="0.001" value={item.drgWeight}
+                    onChange={(e) => handleItemChange(item.id, "drgWeight", e.target.value)}
+                    style={{ borderColor: item.drgWeightManual ? "#e67e22" : undefined }}
+                  />
+                </div>
+
+                {/* Calc Single Weight */}
+                <div className="entry-input">
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    Calc Single Weight (kg)
+                    <span style={{ fontSize: "11px", color: item.unitWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
+                      {item.unitWeightManual ? "✎ Manual" : ""}
+                    </span>
+                    {item.unitWeightManual && (
+                      <button type="button" onClick={() => resetUnitWeightAuto(item.id)}
+                        style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
+                        Reset
+                      </button>
+                    )}
+                  </label>
+                  <input type="number" step="0.001"
+                    value={item.unitWeight !== "" && item.unitWeight !== 0 ? formatNum(parseNum(item.unitWeight)) : ""}
+                    onChange={(e) => handleItemChange(item.id, "unitWeight", e.target.value)}
+                    style={{ borderColor: item.unitWeightManual ? "#e67e22" : undefined }}
+                  />
+                </div>
+
+                {/* Calculated Weight */}
+                <div className="entry-input">
+                  <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    Calculated Weight (kg)
+                    <span style={{ fontSize: "11px", color: item.calcWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
+                      {item.calcWeightManual ? "✎ Manual" : ""}
+                    </span>
+                    {item.calcWeightManual && (
+                      <button type="button" onClick={() => resetCalcWeightAuto(item.id)}
+                        style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
+                        Reset
+                      </button>
+                    )}
+                  </label>
+                  <input type="number" step="0.001"
+                    value={parseNum(item.totalWeight) !== 0 ? formatNum(parseNum(item.totalWeight)) : ""}
+                    onChange={(e) => handleItemChange(item.id, "totalWeight", e.target.value)}
+                    style={{ borderColor: item.calcWeightManual ? "#e67e22" : undefined }}
+                  />
+                </div>
               </div>
             </div>
-
-            <div className="section-grid">
-              <div className="entry-input">
-                <label>Quantity</label>
-                <input type="number" value={item.quantity} onChange={(e) => handleItemChange(item.id, "quantity", e.target.value)} />
-              </div>
-
-              {/* Section */}
-              {renderRowAutocomplete(item, "section", "Section", allSections, "sections", setAllSections)}
-
-              {/* Size (renamed from Thickness) */}
-              {renderRowAutocomplete(item, "size", "Size (mm)", allSizes, "thicknesses", setAllSizes)}
-
-              {/* Length */}
-              {renderRowAutocomplete(item, "length", "Length (mm)", allLengths, "lengths", setAllLengths)}
-
-              {/* Width */}
-              {renderRowAutocomplete(item, "width", "Width (mm)", allWidths, "widths", setAllWidths)}
-
-              {/* Sectional Weight — new field */}
-              <div className="entry-input">
-                <label>Sectional Weight (kg/m)</label>
-                <input
-                  type="number" step="0.001"
-                  value={item.sectionalWeight}
-                  onChange={(e) => handleItemChange(item.id, "sectionalWeight", e.target.value)}
-                />
-              </div>
-
-              <div className="entry-input">
-                <label>Single Weight (kg)</label>
-                <input type="number" step="0.001" value={item.singleWeight} onChange={(e) => handleItemChange(item.id, "singleWeight", e.target.value)} />
-              </div>
-
-              {/* DRG Weight */}
-              <div className="entry-input">
-                <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  DRG Weight (kg)
-                  <span style={{ fontSize: "11px", color: item.drgWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
-                    {item.drgWeightManual ? "✎ Manual" : ""}
-                  </span>
-                  {item.drgWeightManual && (
-                    <button type="button" onClick={() => resetDrgWeightAuto(item.id)}
-                      style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
-                      Reset
-                    </button>
-                  )}
-                </label>
-                <input
-                  type="number" step="0.001"
-                  value={item.drgWeight}
-                  onChange={(e) => handleItemChange(item.id, "drgWeight", e.target.value)}
-                  style={{ borderColor: item.drgWeightManual ? "#e67e22" : undefined }}
-                />
-              </div>
-
-              {/* Calculated Weight */}
-              <div className="entry-input">
-                <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  Calculated Weight (kg)
-                  <span style={{ fontSize: "11px", color: item.calcWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
-                    {item.calcWeightManual ? "✎ Manual" : ""}
-                  </span>
-                  {item.calcWeightManual && (
-                    <button type="button" onClick={() => resetCalcWeightAuto(item.id)}
-                      style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
-                      Reset
-                    </button>
-                  )}
-                </label>
-                <input
-                  type="number" step="0.001"
-                  value={formatNum(parseNum(item.totalWeight))}
-                  onChange={(e) => handleItemChange(item.id, "totalWeight", e.target.value)}
-                  style={{ borderColor: item.calcWeightManual ? "#e67e22" : undefined }}
-                />
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
 
         <button className="add-section-btn" onClick={addRow} type="button">
           <HiPlus /> Add Another Row
@@ -600,7 +912,7 @@ export default function EntryPage() {
             <div>
               <p>Total Rows: {items.length}</p>
               <p>Drawing Number: {headerData["Drawing Number"] || "—"}</p>
-              <p>PO No: {headerData["PO No"] || "—"}</p>
+              <p>POC No: {headerData["POC No"] || "—"}</p>
             </div>
           </div>
         </div>

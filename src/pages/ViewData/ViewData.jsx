@@ -23,7 +23,7 @@ export default function ViewData() {
   const fields = [
     "pos", "drawingNumber", "partName", "quantity",
     "section", "size", "length", "width",
-    "singleWeight", "drgWeight", "totalWeight", "difference",
+    "singleWeight", "drgWeight", "calcSingleWeight", "totalWeight", "difference",
   ];
 
   const fieldLabels = {
@@ -32,17 +32,18 @@ export default function ViewData() {
     "partName": "Part Name",
     "quantity": "Qty",
     "section": "Section",
-    "size": "Size\n(mm)",           // renamed from thickness
+    "size": "Size\n(mm)",
     "length": "Length\n(mm)",
     "width": "Width\n(mm)",
     "singleWeight": "Single Wt\n(kg)",
     "drgWeight": "DRG Wt\n(kg)",
+    "calcSingleWeight": "Calc Single\nWt (kg)",
     "totalWeight": "Calc. Wt\n(kg)",
     "difference": "Diff\n(kg)",
   };
 
   const numericFields = new Set([
-    "quantity", "size", "length", "width", "singleWeight", "drgWeight", "totalWeight",
+    "quantity", "size", "length", "width", "singleWeight", "drgWeight", "calcSingleWeight", "totalWeight",
   ]);
 
   const editableFields = new Set([
@@ -51,6 +52,7 @@ export default function ViewData() {
 
   const noTotalFields = new Set([
     "pos", "drawingNumber", "partName", "section", "difference",
+    "quantity", "size", "length", "width",
   ]);
 
   const fetchData = async () => {
@@ -72,7 +74,6 @@ export default function ViewData() {
               pos: item.pos,
               quantity: item.quantity,
               section: item.section || item.size || item.designation || "",
-              // Support both old "thickness" field and new "size" field
               size: item.size ?? item.thickness ?? 0,
               length: item.length,
               width: item.width,
@@ -120,8 +121,14 @@ export default function ViewData() {
     filteredData.forEach((row) => {
       fields.forEach((f) => {
         if (!noTotalFields.has(f) && f !== "difference") {
-          const num = Number(row[f]);
-          if (!isNaN(num)) t[f] += num;
+          if (f === "calcSingleWeight") {
+            const qty = parseFloat(row.quantity) || 0;
+            const tw = parseFloat(row.totalWeight) || 0;
+            t[f] += qty ? tw / qty : 0;
+          } else {
+            const num = Number(row[f]);
+            if (!isNaN(num)) t[f] += num;
+          }
         }
       });
     });
@@ -134,6 +141,14 @@ export default function ViewData() {
     return n.toFixed(1);
   };
   const parseNum = (v) => parseFloat(v?.toString().replace(/,/g, "")) || 0;
+
+  // Calc Single Weight = totalWeight / quantity
+  const getCalcSingleWeight = (totalWeight, quantity) => {
+    const tw = parseNum(totalWeight);
+    const qty = parseNum(quantity);
+    if (!qty || !tw) return 0;
+    return tw / qty;
+  };
 
   const autoDrgWeight = (ev) => parseNum(ev.quantity) * parseNum(ev.singleWeight);
   const autoCalcWeight = (ev) => {
@@ -294,17 +309,19 @@ export default function ViewData() {
     const wsData = [];
     wsData.push(["SIEC-BOQ Parts List"]);
     wsData.push([]);
-    wsData.push(["PO No:", selectedSummary.poNo, "Po. Desc:", selectedSummary.partName, "Po. Weight:", selectedSummary.weightFOrder]);
+    wsData.push(["POC No:", selectedSummary.poNo, "Item Desc:", selectedSummary.partName, "Item Weight:", selectedSummary.weightFOrder]);
     wsData.push([]);
     const headers = ["S.No", ...fields.map((f) => fieldLabels[f]?.replace("\n", " ") || f)];
     wsData.push(headers);
     filteredData.forEach((row, idx) => {
       const diff = parseNum(row.drgWeight) - parseNum(row.totalWeight);
+      const csw = getCalcSingleWeight(row.totalWeight, row.quantity);
       wsData.push([
         idx + 1,
         ...fields.map((f) => {
           if (f === "pos") return String(row[f]).padStart(3, "0");
           if (f === "difference") return formatNum(diff);
+          if (f === "calcSingleWeight") return formatNum(csw);
           if (numericFields.has(f)) return formatNum(row[f]);
           return row[f] ?? "";
         }),
@@ -327,15 +344,17 @@ export default function ViewData() {
     pdf.text("SIEC-BOQ Parts List", 40, 40);
     pdf.setFont(undefined, "normal");
     pdf.setFontSize(11);
-    pdf.text(`PO No: ${selectedSummary.poNo}    Po. Desc: ${selectedSummary.partName}    Po. Weight: ${selectedSummary.weightFOrder}`, 40, 58);
+    pdf.text(`POC No: ${selectedSummary.poNo}    Item Desc: ${selectedSummary.partName}    Item Weight: ${selectedSummary.weightFOrder}`, 40, 58);
     const tableColumns = ["S.No", ...fields.map((f) => fieldLabels[f]?.replace("\n", " ") || f)];
     const tableRows = filteredData.map((row, idx) => {
       const diff = parseNum(row.drgWeight) - parseNum(row.totalWeight);
+      const csw = getCalcSingleWeight(row.totalWeight, row.quantity);
       return [
         idx + 1,
         ...fields.map((f) => {
           if (f === "pos") return String(row[f]).padStart(3, "0");
           if (f === "difference") return formatNum(diff);
+          if (f === "calcSingleWeight") return formatNum(csw);
           if (numericFields.has(f)) return formatNum(row[f]);
           return row[f] ?? "";
         }),
@@ -344,7 +363,7 @@ export default function ViewData() {
     tableRows.push(["TOTAL", ...fields.map((f) => noTotalFields.has(f) ? "" : formatNum(totals[f]))]);
     const columnStyles = {};
     fields.forEach((f, idx) => {
-      if (numericFields.has(f) || f === "difference") columnStyles[idx + 1] = { halign: "right" };
+      if (numericFields.has(f) || f === "difference" || f === "calcSingleWeight") columnStyles[idx + 1] = { halign: "right" };
     });
     autoTable(pdf, {
       startY: 75,
@@ -369,21 +388,21 @@ export default function ViewData() {
       <div className="controls-wrapper">
         <div className="controls-row">
           <div className="search-Group">
-            <label className="filter-label">PO No:</label>
+            <label className="filter-label">POC No:</label>
             <select className="unit-select" value={searchPONo} onChange={(e) => setSearchPONo(e.target.value)}>
-              <option value="">All PO Nos</option>
+              <option value="">All POC Nos</option>
               {poNoOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div className="search-Group">
-            <label className="filter-label">Po. Desc:</label>
+            <label className="filter-label">Item Desc:</label>
             <select className="unit-select" value={searchPartName} onChange={(e) => setSearchPartName(e.target.value)}>
               <option value="">All Descriptions</option>
               {partNameOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>
           </div>
           <div className="search-Group">
-            <label className="filter-label">Po. Weight:</label>
+            <label className="filter-label">Item Weight:</label>
             <select className="unit-select" value={searchWeightFOrder} onChange={(e) => setSearchWeightFOrder(e.target.value)}>
               <option value="">All Weights</option>
               {weightFOrderOptions.map((w) => <option key={w} value={w}>{formatNum(w)}</option>)}
@@ -402,9 +421,9 @@ export default function ViewData() {
       </div>
 
       <div className="selected-summary-box">
-        <span><strong>PO No:</strong> {selectedSummary.poNo}</span>
-        <span><strong>Po. Desc:</strong> {selectedSummary.partName}</span>
-        <span><strong>Po. Weight:</strong> {selectedSummary.weightFOrder}</span>
+        <span><strong>POC No:</strong> {selectedSummary.poNo}</span>
+        <span><strong>Item Desc:</strong> {selectedSummary.partName}</span>
+        <span><strong>Item Weight:</strong> {selectedSummary.weightFOrder}</span>
       </div>
 
       <div className="table-wrapper">
@@ -431,6 +450,8 @@ export default function ViewData() {
                 const isEditing = editingKey === rowKey;
                 const displayDrgWeight = isEditing ? parseNum(editValues.drgWeight) : parseNum(row.drgWeight);
                 const displayCalcWeight = isEditing ? parseNum(editValues.totalWeight) : parseNum(row.totalWeight);
+                const displayQty = isEditing ? parseNum(editValues.quantity) : parseNum(row.quantity);
+                const displayCalcSingleWeight = displayQty ? displayCalcWeight / displayQty : 0;
                 const diff = displayDrgWeight - displayCalcWeight;
 
                 return (
@@ -440,6 +461,14 @@ export default function ViewData() {
                     {fields.map((f) => {
                       if (f === "pos") return <td key={f} style={{ whiteSpace: "nowrap" }}>{String(row[f]).padStart(3, "0")}</td>;
                       if (f === "drawingNumber" || f === "partName") return <td key={f} style={{ whiteSpace: "nowrap" }}>{row[f] ?? ""}</td>;
+
+                      if (f === "calcSingleWeight") {
+                        return (
+                          <td key={f} className="numeric-cell" style={{ whiteSpace: "nowrap" }}>
+                            {displayCalcSingleWeight ? formatNum(displayCalcSingleWeight) : ""}
+                          </td>
+                        );
+                      }
 
                       if (f === "totalWeight") {
                         if (isEditing) return (
