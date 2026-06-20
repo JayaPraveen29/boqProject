@@ -30,11 +30,10 @@ export default function EntryPage() {
   const [allLengths, setAllLengths]               = useState([]);
   const [allWidths, setAllWidths]                 = useState([]);
 
-  // Relation tables (same pattern as old project)
-  const [sectionSizeRelations, setSectionSizeRelations]           = useState([]); // { id, sectionId, sizeId }
-  const [sectionSizeLengthRelations, setSectionSizeLengthRelations] = useState([]); // { id, sectionId, sizeId, lengthId }
-  const [sectionSizeWidthRelations, setSectionSizeWidthRelations]   = useState([]); // { id, sectionId, sizeId, widthId }
-  const [sectionSectionalWeights, setSectionSectionalWeights]     = useState([]); // { id, sectionId, sectionalWeight }
+  const [sectionSizeRelations, setSectionSizeRelations]           = useState([]);
+  const [sectionSizeLengthRelations, setSectionSizeLengthRelations] = useState([]);
+  const [sectionSizeWidthRelations, setSectionSizeWidthRelations]   = useState([]);
+  const [sectionSectionalWeights, setSectionSectionalWeights]     = useState([]);
 
   const [activeSuggestion, setActiveSuggestion] = useState(null);
   const [customInputs, setCustomInputs]         = useState({});
@@ -90,7 +89,6 @@ export default function EntryPage() {
       setAllLengths(mapSnap(lenSnap));
       setAllWidths(mapSnap(widSnap));
 
-      // Fetch relation tables
       const [ssRelSnap, sslRelSnap, sswRelSnap, swSnap, entriesSnap] = await Promise.all([
         getDocs(collection(db, "sectionSizeRelations")),
         getDocs(collection(db, "sectionSizeLengthRelations")),
@@ -104,7 +102,7 @@ export default function EntryPage() {
       setSectionSizeWidthRelations(sswRelSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setSectionSectionalWeights(swSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
 
-      // Build pocNo -> weightFOrderEntered map
+      // Build pocNo -> weightFOrderEntered map — handle both pocNo and poNo field names
       const weightMap = {};
       entriesSnap.docs.forEach((d) => {
         const entry = d.data();
@@ -155,8 +153,6 @@ export default function EntryPage() {
   }, [items]);
 
   // ─── Relation helpers ──────────────────────────────────────────────────────
-
-  // Get sizes filtered by selected section using relation table
   const getAvailableSizes = (selectedSection) => {
     if (!selectedSection) return allSizes;
     const sectionObj = allSections.find((s) => s.value === selectedSection);
@@ -164,11 +160,10 @@ export default function EntryPage() {
     const relatedSizeIds = sectionSizeRelations
       .filter((rel) => rel.sectionId === sectionObj.id)
       .map((rel) => rel.sizeId);
-    if (relatedSizeIds.length === 0) return allSizes; // no relations yet → show all
+    if (relatedSizeIds.length === 0) return allSizes;
     return allSizes.filter((s) => relatedSizeIds.includes(s.id));
   };
 
-  // Get lengths filtered by section + size using relation table
   const getAvailableLengths = (selectedSection, selectedSize) => {
     if (!selectedSection || !selectedSize) return allLengths;
     const sectionObj = allSections.find((s) => s.value === selectedSection);
@@ -181,7 +176,6 @@ export default function EntryPage() {
     return allLengths.filter((l) => relatedLengthIds.includes(l.id));
   };
 
-  // Get widths filtered by section + size using relation table
   const getAvailableWidths = (selectedSection, selectedSize) => {
     if (!selectedSection || !selectedSize) return allWidths;
     const sectionObj = allSections.find((s) => s.value === selectedSection);
@@ -194,7 +188,6 @@ export default function EntryPage() {
     return allWidths.filter((w) => relatedWidthIds.includes(w.id));
   };
 
-  // Get sectional weight for a section from relation table
   const getSectionalWeightForSection = (selectedSection) => {
     if (!selectedSection) return "";
     const sectionObj = allSections.find((s) => s.value === selectedSection);
@@ -203,7 +196,6 @@ export default function EntryPage() {
     return rel ? String(rel.sectionalWeight) : "";
   };
 
-  // Save section-size relation if not already exists
   const saveSectionSizeRelation = async (sectionValue, sizeValue) => {
     if (!sectionValue?.trim() || !sizeValue?.trim()) return;
     const sectionObj = allSections.find((s) => s.value === sectionValue);
@@ -224,7 +216,6 @@ export default function EntryPage() {
     }
   };
 
-  // Save section-size-length relation if not already exists
   const saveSectionSizeLengthRelation = async (sectionValue, sizeValue, lengthValue) => {
     if (!sectionValue?.trim() || !sizeValue?.trim() || !lengthValue?.trim()) return;
     const sectionObj = allSections.find((s) => s.value === sectionValue);
@@ -245,7 +236,6 @@ export default function EntryPage() {
     }
   };
 
-  // Save section-size-width relation if not already exists
   const saveSectionSizeWidthRelation = async (sectionValue, sizeValue, widthValue) => {
     if (!sectionValue?.trim() || !sizeValue?.trim() || !widthValue?.trim()) return;
     const sectionObj = allSections.find((s) => s.value === sectionValue);
@@ -266,7 +256,6 @@ export default function EntryPage() {
     }
   };
 
-  // Save / update sectional weight for a section
   const saveSectionalWeight = async (sectionValue, weight) => {
     if (!sectionValue?.trim() || !weight) return;
     const sectionObj = allSections.find((s) => s.value === sectionValue);
@@ -274,7 +263,6 @@ export default function EntryPage() {
     const existing = sectionSectionalWeights.find((r) => r.sectionId === sectionObj.id);
     try {
       if (existing) {
-        // Update in place (delete + re-add to keep it simple without update import)
         await deleteDoc(doc(db, "sectionSectionalWeights", existing.id));
         const docRef = await addDoc(collection(db, "sectionSectionalWeights"), {
           sectionId: sectionObj.id,
@@ -310,25 +298,28 @@ export default function EntryPage() {
     return (q * sw).toString();
   };
 
-  // Plate: size × 7.85 × length × width / 1,000,000  (kg)
-  // Section: length / 1000 × sectionalWeight           (kg)
+  // Plate:   size(mm) × 7.85 × length(mm) × width(mm) / 1,000,000   (kg)
+  // Section: length(mm) × sectionalWeight(kg/m) / 1000               (kg)
+  // NOTE: returns "" (not 0) when required inputs are missing, same as calcDrgWeight,
+  // so the field stays blank instead of showing 0 before it's ready to calculate.
   const calcUnitWeight = (length, width, size, sectionalWeight, isPlate) => {
     const l = parseNum(length);
     if (isPlate) {
       const w = parseNum(width), s = parseNum(size);
-      if (!l || !w || !s) return 0;
+      if (!l || !w || !s) return "";
       return (s * DENSITY * l * w) / 1_000_000;
     } else {
       const sw = parseNum(sectionalWeight);
-      if (!l || !sw) return 0;
+      if (!l || !sw) return "";
       return (l / 1000) * sw;
     }
   };
 
   const calcTotalWeight = (length, width, size, quantity, sectionalWeight, isPlate) => {
     const q = parseNum(quantity);
-    if (!q) return 0;
-    return calcUnitWeight(length, width, size, sectionalWeight, isPlate) * q;
+    const uw = parseNum(calcUnitWeight(length, width, size, sectionalWeight, isPlate));
+    if (!q || !uw) return "";
+    return uw * q;
   };
 
   // ─── Item change handler ───────────────────────────────────────────────────
@@ -339,17 +330,25 @@ export default function EntryPage() {
         let updated = { ...item, [key]: value };
 
         // When section changes → auto-fill sectional weight + reset downstream
-        if (key === "section") {
+        // (only when the value actually changed, not on every keystroke/re-select of the same value)
+        if (key === "section" && value !== item.section) {
           const sw = getSectionalWeightForSection(value);
           updated.sectionalWeight = sw;
           updated.size = "";
           updated.length = "";
           updated.width = "";
-          updated.unitWeight = calcUnitWeight("", "", "", sw, updated.isPlate);
-          updated.totalWeight = calcTotalWeight("", "", "", updated.quantity, sw, updated.isPlate);
+          // Recalculate with cleared values
+          if (!updated.unitWeightManual) {
+            updated.unitWeight = calcUnitWeight("", "", "", sw, updated.isPlate);
+          }
+          if (!updated.calcWeightManual) {
+            updated.totalWeight = calcTotalWeight("", "", "", updated.quantity, sw, updated.isPlate);
+          }
         }
+
         // When size changes → reset length and width
-        if (key === "size") {
+        // (only when the value actually changed, not when re-selecting the same value)
+        if (key === "size" && value !== item.size) {
           updated.length = "";
           updated.width = "";
         }
@@ -361,30 +360,36 @@ export default function EntryPage() {
           updated.drgWeight = calcDrgWeight(updated.quantity, updated.singleWeight);
         }
 
-        // Unit weight
+        // Unit weight (Calc Single Weight) — same pattern as DRG Weight
         if (key === "unitWeight") {
           updated.unitWeightManual = true;
         } else if (
           ["length", "width", "size", "sectionalWeight", "isPlate"].includes(key) &&
           !updated.unitWeightManual
         ) {
-          updated.unitWeight = calcUnitWeight(updated.length, updated.width, updated.size, updated.sectionalWeight, updated.isPlate);
+          updated.unitWeight = calcUnitWeight(
+            updated.length, updated.width, updated.size, updated.sectionalWeight, updated.isPlate
+          );
         }
 
-        // Total weight
+        // Total weight (Calculated Weight) — same pattern as DRG Weight
         if (key === "totalWeight") {
           updated.calcWeightManual = true;
-          updated.totalWeight = parseNum(value);
+          updated.totalWeight = value;
         } else if (
           ["length", "width", "size", "quantity", "sectionalWeight", "isPlate"].includes(key) &&
           !updated.calcWeightManual
         ) {
-          updated.totalWeight = calcTotalWeight(updated.length, updated.width, updated.size, updated.quantity, updated.sectionalWeight, updated.isPlate);
+          updated.totalWeight = calcTotalWeight(
+            updated.length, updated.width, updated.size, updated.quantity, updated.sectionalWeight, updated.isPlate
+          );
         }
 
-        // Sync unit weight manual edit → total weight
+        // Sync manual unit weight edit → total weight
         if (key === "unitWeight" && !updated.calcWeightManual) {
-          updated.totalWeight = parseNum(value) * parseNum(updated.quantity);
+          const q = parseNum(updated.quantity);
+          const uw = parseNum(value);
+          updated.totalWeight = (q && uw) ? uw * q : "";
         }
 
         return updated;
@@ -395,7 +400,8 @@ export default function EntryPage() {
   const resetUnitWeightAuto = (id) => {
     setItems((prev) => prev.map((item) => {
       if (item.id !== id) return item;
-      return { ...item, unitWeightManual: false, unitWeight: calcUnitWeight(item.length, item.width, item.size, item.sectionalWeight, item.isPlate) };
+      const uw = calcUnitWeight(item.length, item.width, item.size, item.sectionalWeight, item.isPlate);
+      return { ...item, unitWeightManual: false, unitWeight: uw };
     }));
   };
 
@@ -409,7 +415,11 @@ export default function EntryPage() {
   const resetCalcWeightAuto = (id) => {
     setItems((prev) => prev.map((item) => {
       if (item.id !== id) return item;
-      return { ...item, calcWeightManual: false, totalWeight: calcTotalWeight(item.length, item.width, item.size, item.quantity, item.sectionalWeight, item.isPlate) };
+      return {
+        ...item,
+        calcWeightManual: false,
+        totalWeight: calcTotalWeight(item.length, item.width, item.size, item.quantity, item.sectionalWeight, item.isPlate),
+      };
     }));
   };
 
@@ -477,7 +487,6 @@ export default function EntryPage() {
     }
   };
 
-  // Custom input (add new value) state helpers
   const toggleCustomInput = (rowId, type) => {
     const key = `${rowId}-${type}`;
     setCustomInputs((prev) => ({ ...prev, [key]: { show: !prev[key]?.show, value: prev[key]?.value || "" } }));
@@ -539,20 +548,15 @@ export default function EntryPage() {
       const trimmed = customState.value.trim();
       if (!trimmed) { alert("Please enter a value!"); return; }
 
-      // Check if value already exists in options
       const existing = options.find((o) => o.value.toLowerCase() === trimmed.toLowerCase());
       if (existing) {
-        // Just select it
         handleItemChange(item.id, fieldKey, existing.value);
-        // If size field, also link to section
         if (fieldKey === "size" && item.section) {
           await saveSectionSizeRelation(item.section, existing.value);
         }
-        // If length field, link to section + size
         if (fieldKey === "length" && item.section && item.size) {
           await saveSectionSizeLengthRelation(item.section, item.size, existing.value);
         }
-        // If width field, link to section + size
         if (fieldKey === "width" && item.section && item.size) {
           await saveSectionSizeWidthRelation(item.section, item.size, existing.value);
         }
@@ -565,7 +569,6 @@ export default function EntryPage() {
         const newOpt = { id: docRef.id, value: trimmed, isManual: true };
         setOptions((prev) => [...prev, newOpt].sort((a, b) => a.value.localeCompare(b.value)));
         handleItemChange(item.id, fieldKey, trimmed);
-        // If size field, link new size to current section
         if (fieldKey === "size" && item.section) {
           const sectionObj = allSections.find((s) => s.value === item.section);
           if (sectionObj) {
@@ -573,7 +576,6 @@ export default function EntryPage() {
             setSectionSizeRelations((prev) => [...prev, { id: relDocRef.id, sectionId: sectionObj.id, sizeId: docRef.id }]);
           }
         }
-        // If length field, link new length to current section + size
         if (fieldKey === "length" && item.section && item.size) {
           const sectionObj = allSections.find((s) => s.value === item.section);
           const sizeObj    = allSizes.find((s) => s.value === item.size);
@@ -582,7 +584,6 @@ export default function EntryPage() {
             setSectionSizeLengthRelations((prev) => [...prev, { id: relDocRef.id, sectionId: sectionObj.id, sizeId: sizeObj.id, lengthId: docRef.id }]);
           }
         }
-        // If width field, link new width to current section + size
         if (fieldKey === "width" && item.section && item.size) {
           const sectionObj = allSections.find((s) => s.value === item.section);
           const sizeObj    = allSizes.find((s) => s.value === item.size);
@@ -672,6 +673,8 @@ export default function EntryPage() {
     try {
       const docData = {
         pocNo: headerData["POC No"],
+        // also save as poNo for backward-compatibility with ViewData
+        poNo: headerData["POC No"],
         equipment: headerData["Equipment"],
         weightFOrderEntered: parseNum(weightFOrderEntered),
         weightFOrderCalculated,
@@ -686,10 +689,10 @@ export default function EntryPage() {
           length: parseNum(i.length),
           width: parseNum(i.width),
           sectionalWeight: parseNum(i.sectionalWeight),
-          unitWeight: parseNum(i.unitWeight),
+          unitWeight: typeof i.unitWeight === "number" ? i.unitWeight : parseNum(i.unitWeight),
           singleWeight: parseNum(i.singleWeight),
           drgWeight: parseNum(i.drgWeight),
-          totalWeight: parseNum(i.totalWeight),
+          totalWeight: typeof i.totalWeight === "number" ? i.totalWeight : parseNum(i.totalWeight),
           isPlate: i.isPlate,
         })),
         totalWeight: weightFOrderCalculated,
@@ -697,7 +700,6 @@ export default function EntryPage() {
       };
       await addDoc(collection(db, "entries"), docData);
 
-      // Persist relations for all items
       for (const item of items) {
         if (item.section && item.size) {
           await saveSectionSizeRelation(item.section, item.size);
@@ -789,7 +791,6 @@ export default function EntryPage() {
                   <input type="number" value={item.quantity} onChange={(e) => handleItemChange(item.id, "quantity", e.target.value)} />
                 </div>
 
-                {/* Section — plain autocomplete */}
                 {renderAutocomplete(
                   "Section",
                   item.section,
@@ -799,16 +800,10 @@ export default function EntryPage() {
                   setAllSections
                 )}
 
-                {/* Size — dropdown filtered by section via relation table */}
                 {renderRowDropdown(item, "size", "Size (mm)", availableSizes, "thicknesses", setAllSizes)}
-
-                {/* Length — filtered by section + size */}
                 {renderRowDropdown(item, "length", "Length (mm)", availableLengths, "lengths", setAllLengths)}
-
-                {/* Width — filtered by section + size */}
                 {renderRowDropdown(item, "width", "Width (mm)", availableWidths, "widths", setAllWidths)}
 
-                {/* Sectional Weight (kg/m) — auto-filled from relation table */}
                 <div className="entry-input">
                   <label>Sectional Weight (kg/m)</label>
                   <input
@@ -823,7 +818,6 @@ export default function EntryPage() {
                   />
                 </div>
 
-                {/* Single Weight */}
                 <div className="entry-input">
                   <label>Single Weight (kg)</label>
                   <input type="number" step="0.001" value={item.singleWeight} onChange={(e) => handleItemChange(item.id, "singleWeight", e.target.value)} />
@@ -831,63 +825,30 @@ export default function EntryPage() {
 
                 {/* DRG Weight */}
                 <div className="entry-input">
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    DRG Weight (kg)
-                    <span style={{ fontSize: "11px", color: item.drgWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
-                      {item.drgWeightManual ? "✎ Manual" : ""}
-                    </span>
-                    {item.drgWeightManual && (
-                      <button type="button" onClick={() => resetDrgWeightAuto(item.id)}
-                        style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
-                        Reset
-                      </button>
-                    )}
-                  </label>
+                  <label>DRG Weight (kg)</label>
                   <input type="number" step="0.001" value={item.drgWeight}
                     onChange={(e) => handleItemChange(item.id, "drgWeight", e.target.value)}
-                    style={{ borderColor: item.drgWeightManual ? "#e67e22" : undefined }}
                   />
                 </div>
 
-                {/* Calc Single Weight */}
+                {/* Calc Single Weight — now bound directly to the raw value, same as DRG Weight,
+                    so it auto-fills correctly instead of being blanked out by comma formatting */}
                 <div className="entry-input">
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    Calc Single Weight (kg)
-                    <span style={{ fontSize: "11px", color: item.unitWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
-                      {item.unitWeightManual ? "✎ Manual" : ""}
-                    </span>
-                    {item.unitWeightManual && (
-                      <button type="button" onClick={() => resetUnitWeightAuto(item.id)}
-                        style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
-                        Reset
-                      </button>
-                    )}
-                  </label>
-                  <input type="number" step="0.001"
-                    value={item.unitWeight !== "" && item.unitWeight !== 0 ? formatNum(parseNum(item.unitWeight)) : ""}
+                  <label>Calc Single Weight (kg)</label>
+                  <input
+                    type="number" step="0.001"
+                    value={item.unitWeight}
                     onChange={(e) => handleItemChange(item.id, "unitWeight", e.target.value)}
-                    style={{ borderColor: item.unitWeightManual ? "#e67e22" : undefined }}
                   />
                 </div>
 
-                {/* Calculated Weight */}
+                {/* Calculated Weight — same fix as Calc Single Weight above */}
                 <div className="entry-input">
-                  <label style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                    Calculated Weight (kg)
-                    <span style={{ fontSize: "11px", color: item.calcWeightManual ? "#e67e22" : "#27ae60", fontWeight: 600 }}>
-                      {item.calcWeightManual ? "✎ Manual" : ""}
-                    </span>
-                    {item.calcWeightManual && (
-                      <button type="button" onClick={() => resetCalcWeightAuto(item.id)}
-                        style={{ fontSize: "10px", padding: "1px 6px", background: "#eee", border: "1px solid #ccc", borderRadius: "3px", cursor: "pointer" }}>
-                        Reset
-                      </button>
-                    )}
-                  </label>
-                  <input type="number" step="0.001"
-                    value={parseNum(item.totalWeight) !== 0 ? formatNum(parseNum(item.totalWeight)) : ""}
+                  <label>Calculated Weight (kg)</label>
+                  <input
+                    type="number" step="0.001"
+                    value={item.totalWeight}
                     onChange={(e) => handleItemChange(item.id, "totalWeight", e.target.value)}
-                    style={{ borderColor: item.calcWeightManual ? "#e67e22" : undefined }}
                   />
                 </div>
               </div>

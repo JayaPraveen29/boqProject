@@ -140,7 +140,6 @@ export default function AbstractReport() {
         drgWeight: sectionData.reduce((s, x) => s + x.drgWeight, 0),
         totalWeight: tw,
         totalQty: tq,
-        calcSingleWt: tq ? tw / tq : 0,
       };
     } else {
       const tw = drawingData.reduce((s, x) => s + x.totalWeight, 0);
@@ -149,7 +148,6 @@ export default function AbstractReport() {
         drgWeight: drawingData.reduce((s, x) => s + x.drgWeight, 0),
         totalWeight: tw,
         totalQty: tq,
-        calcSingleWt: tq ? tw / tq : 0,
       };
     }
   }, [viewMode, sectionData, drawingData]);
@@ -157,12 +155,6 @@ export default function AbstractReport() {
   const fmt3 = (v) => { const n = Number(v); return isNaN(n) ? "0.0" : n.toFixed(1); };
   const fmtComma = (v) => { const n = Number(v); return isNaN(n) ? "0" : n.toLocaleString("en-IN", { maximumFractionDigits: 3 }); };
   const summaryLine = `POC No: ${searchPONo || "All"}    Description: ${searchPartName || "All"}`;
-
-  // Calc Single Weight = totalWeight / totalQty
-  const calcSingleWt = (totalWeight, totalQty) => {
-    if (!totalQty) return 0;
-    return totalWeight / totalQty;
-  };
 
   const toggleDrawing = (drawingNumber) => {
     setExpandedDrawings((prev) => {
@@ -189,20 +181,20 @@ export default function AbstractReport() {
         row.section,
         fmt3(row.size),
         fmt3(row.drgWeight),
-        fmt3(calcSingleWt(row.totalWeight, row.totalQty)),
         fmt3(row.totalWeight),
+        fmt3(Math.abs(row.drgWeight - row.totalWeight)),
       ]);
       body.push([
         "",
         { content: "TOTAL", styles: { fontStyle: "bold", halign: "left" } },
         "",
         { content: fmt3(grandTotals.drgWeight), styles: { fontStyle: "bold", halign: "right" } },
-        { content: fmt3(grandTotals.calcSingleWt), styles: { fontStyle: "bold", halign: "right" } },
         { content: fmt3(grandTotals.totalWeight), styles: { fontStyle: "bold", halign: "right" } },
+        { content: fmt3(Math.abs(grandTotals.drgWeight - grandTotals.totalWeight)), styles: { fontStyle: "bold", halign: "right" } },
       ]);
       autoTable(doc, {
         startY: 80,
-        head: [["S.No", "Section", "Size (mm)", "Drg Weight (Kg)", "Calc Single Wt (kg)", "Calc. Weight (kg)"]],
+        head: [["S.No", "Section", "Size (mm)", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]],
         body,
         theme: "grid",
         styles: { fontSize: 8, cellPadding: 3 },
@@ -224,7 +216,6 @@ export default function AbstractReport() {
           { content: row.drawingNumber, styles: { fontStyle: "bold" } },
           { content: row.partName, styles: { fontStyle: "bold" } },
           { content: fmt3(row.drgWeight), styles: { fontStyle: "bold", halign: "right" } },
-          { content: fmt3(calcSingleWt(row.totalWeight, row.totalQty)), styles: { fontStyle: "bold", halign: "right" } },
           { content: fmt3(row.totalWeight), styles: { fontStyle: "bold", halign: "right" } },
           { content: fmt3(Math.abs(row.drgWeight - row.totalWeight)), styles: { fontStyle: "bold", halign: "right" } },
         ]);
@@ -234,7 +225,6 @@ export default function AbstractReport() {
             { content: `  ${si + 1}.`, styles: { textColor: [100, 100, 100] } },
             { content: sec.section, styles: { textColor: [100, 100, 100] } },
             { content: fmt3(sec.drgWeight), styles: { halign: "right", textColor: [100, 100, 100] } },
-            { content: fmt3(calcSingleWt(sec.totalWeight, sec.totalQty)), styles: { halign: "right", textColor: [100, 100, 100] } },
             { content: fmt3(sec.totalWeight), styles: { halign: "right", textColor: [100, 100, 100] } },
             { content: `Size: ${fmt3(sec.size)}`, styles: { textColor: [100, 100, 100], fontSize: 7 } },
           ]);
@@ -245,13 +235,12 @@ export default function AbstractReport() {
         { content: "TOTAL", styles: { fontStyle: "bold", halign: "left" } },
         "",
         { content: fmt3(grandTotals.drgWeight), styles: { fontStyle: "bold", halign: "right" } },
-        { content: fmt3(grandTotals.calcSingleWt), styles: { fontStyle: "bold", halign: "right" } },
         { content: fmt3(grandTotals.totalWeight), styles: { fontStyle: "bold", halign: "right" } },
         "",
       ]);
       autoTable(doc, {
         startY: 80,
-        head: [["S.No", "Drawing No", "Part Name / Section", "Drg Weight (Kg)", "Calc Single Wt (kg)", "Calc. Weight (kg)", "Difference"]],
+        head: [["S.No", "Drawing No", "Part Name / Section", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]],
         body,
         theme: "grid",
         styles: { fontSize: 7.5, cellPadding: 3 },
@@ -263,7 +252,6 @@ export default function AbstractReport() {
           3: { halign: "right" },
           4: { halign: "right" },
           5: { halign: "right" },
-          6: { halign: "right" },
         },
       });
     }
@@ -279,32 +267,32 @@ export default function AbstractReport() {
     wsData.push([]);
 
     if (viewMode === "section") {
-      wsData.push(["S.No", "Section", "Size (mm)", "Drg Weight (Kg)", "Calc Single Wt (kg)", "Calc. Weight (kg)"]);
+      wsData.push(["S.No", "Section", "Size (mm)", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]);
       sectionData.forEach((row, i) => {
         wsData.push([
           i + 1,
           row.section,
           Number(fmt3(row.size)),
           Number(fmt3(row.drgWeight)),
-          Number(fmt3(calcSingleWt(row.totalWeight, row.totalQty))),
           Number(fmt3(row.totalWeight)),
+          Number(fmt3(Math.abs(row.drgWeight - row.totalWeight))),
         ]);
       });
-      wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.calcSingleWt)), Number(fmt3(grandTotals.totalWeight))]);
+      wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight)), Number(fmt3(Math.abs(grandTotals.drgWeight - grandTotals.totalWeight)))]);
     } else {
-      wsData.push(["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc Single Wt (kg)", "Calc. Weight (kg)", "Difference", "Section", "Size (mm)", "Sec Drg Wt", "Sec Calc Single Wt", "Sec Calc Wt"]);
+      wsData.push(["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference", "Section", "Size (mm)", "Sec Drg Wt", "Sec Calc Wt"]);
       drawingData.forEach((row, i) => {
         const diff = Math.abs(row.drgWeight - row.totalWeight);
-        wsData.push([i + 1, row.drawingNumber, row.partName, Number(fmt3(row.drgWeight)), Number(fmt3(calcSingleWt(row.totalWeight, row.totalQty))), Number(fmt3(row.totalWeight)), Number(fmt3(diff)), "", "", "", "", ""]);
+        wsData.push([i + 1, row.drawingNumber, row.partName, Number(fmt3(row.drgWeight)), Number(fmt3(row.totalWeight)), Number(fmt3(diff)), "", "", "", ""]);
         row.sections.forEach((sec) => {
-          wsData.push(["", "", `  ↳ ${sec.section}`, "", "", "", "", sec.section, Number(fmt3(sec.size)), Number(fmt3(sec.drgWeight)), Number(fmt3(calcSingleWt(sec.totalWeight, sec.totalQty))), Number(fmt3(sec.totalWeight))]);
+          wsData.push(["", "", `  ↳ ${sec.section}`, "", "", "", sec.section, Number(fmt3(sec.size)), Number(fmt3(sec.drgWeight)), Number(fmt3(sec.totalWeight))]);
         });
       });
-      wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.calcSingleWt)), Number(fmt3(grandTotals.totalWeight)), "", "", "", "", "", ""]);
+      wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight)), "", "", "", "", ""]);
     }
 
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws["!cols"] = Array(12).fill({ wch: 18 });
+    ws["!cols"] = Array(10).fill({ wch: 18 });
     XLSX.utils.book_append_sheet(wb, ws, "Abstract Report");
     XLSX.writeFile(wb, "Abstract_Report_BOQ.xlsx");
   };
@@ -369,30 +357,39 @@ export default function AbstractReport() {
                 <th>Section</th>
                 <th>Size (mm)</th>
                 <th>Drg Weight (Kg)</th>
-                <th>Calc Single Wt (kg)</th>
                 <th>Calc. Weight (kg)</th>
+                <th>Difference</th>
               </tr>
             </thead>
             <tbody>
               {sectionData.length === 0 ? (
                 <tr><td colSpan={6} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
               ) : (
-                sectionData.map((row, i) => (
-                  <tr key={`${row.section}-${row.size}`}>
-                    <td>{i + 1}</td>
-                    <td className="text-left">{row.section}</td>
-                    <td className="numeric-cell">{fmt3(row.size)}</td>
-                    <td className="numeric-cell">{fmt3(row.drgWeight)}</td>
-                    <td className="numeric-cell">{fmt3(calcSingleWt(row.totalWeight, row.totalQty))}</td>
-                    <td className="numeric-cell">{fmt3(row.totalWeight)}</td>
-                  </tr>
-                ))
+                sectionData.map((row, i) => {
+                  const diff = row.drgWeight - row.totalWeight;
+                  const diffClass = Math.abs(diff) < 0.1 ? "" : diff > 0 ? "diff-over" : "diff-under";
+                  return (
+                    <tr key={`${row.section}-${row.size}`}>
+                      <td>{i + 1}</td>
+                      <td className="text-left">{row.section}</td>
+                      <td className="numeric-cell">{fmt3(row.size)}</td>
+                      <td className="numeric-cell">{fmt3(row.drgWeight)}</td>
+                      <td className="numeric-cell">{fmt3(row.totalWeight)}</td>
+                      <td className={`numeric-cell ${diffClass}`}>
+                        {fmt3(Math.abs(diff))}
+                        {Math.abs(diff) >= 0.1 && (
+                          <span className="diff-indicator">{diff > 0 ? "▼" : "▲"}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
               <tr className="total-row">
                 <td colSpan={3} style={{ textAlign: "center" }}>TOTAL</td>
                 <td className="numeric-cell">{fmt3(grandTotals.drgWeight)}</td>
-                <td className="numeric-cell">{fmt3(grandTotals.calcSingleWt)}</td>
                 <td className="numeric-cell">{fmt3(grandTotals.totalWeight)}</td>
+                <td className="numeric-cell">{fmt3(Math.abs(grandTotals.drgWeight - grandTotals.totalWeight))}</td>
               </tr>
             </tbody>
           </table>
@@ -400,7 +397,7 @@ export default function AbstractReport() {
           <table className="abstract-table">
             <thead>
               <tr>
-                <th colSpan={8} className="table-title">
+                <th colSpan={7} className="table-title">
                   Drawing-wise Abstract{searchPONo && ` — POC: ${searchPONo}`}{searchPartName && ` (${searchPartName})`}
                 </th>
               </tr>
@@ -410,14 +407,13 @@ export default function AbstractReport() {
                 <th>Drawing No</th>
                 <th>Part Name</th>
                 <th>Drg Weight (Kg)</th>
-                <th>Calc Single Wt (kg)</th>
                 <th>Calc. Weight (kg)</th>
                 <th>Difference</th>
               </tr>
             </thead>
             <tbody>
               {drawingData.length === 0 ? (
-                <tr><td colSpan={8} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
+                <tr><td colSpan={7} className="empty-cell">No data found. Add entries from the Entry Page!</td></tr>
               ) : (
                 drawingData.map((row, i) => {
                   const diff = row.drgWeight - row.totalWeight;
@@ -434,7 +430,6 @@ export default function AbstractReport() {
                         <td className="text-left" style={{ fontWeight: 600 }}>{row.drawingNumber}</td>
                         <td className="text-left" style={{ fontWeight: 600 }}>{row.partName}</td>
                         <td className="numeric-cell" style={{ fontWeight: 600 }}>{fmt3(row.drgWeight)}</td>
-                        <td className="numeric-cell" style={{ fontWeight: 600 }}>{fmt3(calcSingleWt(row.totalWeight, row.totalQty))}</td>
                         <td className="numeric-cell" style={{ fontWeight: 600 }}>{fmt3(row.totalWeight)}</td>
                         <td className={`numeric-cell ${diffClass}`} style={{ fontWeight: 600 }}>
                           {fmt3(Math.abs(diff))}
@@ -456,7 +451,6 @@ export default function AbstractReport() {
                             Size: {fmt3(sec.size)} mm
                           </td>
                           <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(sec.drgWeight)}</td>
-                          <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(calcSingleWt(sec.totalWeight, sec.totalQty))}</td>
                           <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(sec.totalWeight)}</td>
                           <td></td>
                         </tr>
@@ -469,7 +463,6 @@ export default function AbstractReport() {
                 <td></td>
                 <td colSpan={3}>TOTAL</td>
                 <td className="numeric-cell">{fmt3(grandTotals.drgWeight)}</td>
-                <td className="numeric-cell">{fmt3(grandTotals.calcSingleWt)}</td>
                 <td className="numeric-cell">{fmt3(grandTotals.totalWeight)}</td>
                 <td></td>
               </tr>

@@ -66,7 +66,8 @@ export default function ViewData() {
             rows.push({
               firestoreId: d.id,
               itemIndex: idx,
-              poNo: entry.poNo || "",
+              // FIX: handle both pocNo (new) and poNo (old) field names
+              poNo: entry.pocNo || entry.poNo || "",
               equipment: entry.equipment || "",
               weightFOrder: entry.weightFOrderEntered ?? entry.weightFOrder ?? 0,
               partName: entry.partName || "",
@@ -140,9 +141,15 @@ export default function ViewData() {
     if (isNaN(n)) return "";
     return n.toFixed(1);
   };
+
+  const formatInputNum = (v) => {
+    const n = parseFloat(v);
+    if (isNaN(n)) return "";
+    return parseFloat(n.toFixed(3)).toString();
+  };
+
   const parseNum = (v) => parseFloat(v?.toString().replace(/,/g, "")) || 0;
 
-  // Calc Single Weight = totalWeight / quantity
   const getCalcSingleWeight = (totalWeight, quantity) => {
     const tw = parseNum(totalWeight);
     const qty = parseNum(quantity);
@@ -151,29 +158,41 @@ export default function ViewData() {
   };
 
   const autoDrgWeight = (ev) => parseNum(ev.quantity) * parseNum(ev.singleWeight);
+
   const autoCalcWeight = (ev) => {
-    if (ev.isPlate) {
-      return (parseNum(ev.length) * parseNum(ev.width) * parseNum(ev.size) * DENSITY * parseNum(ev.quantity)) / 1_000_000;
+    const isPlate = ev.isPlate !== undefined ? ev.isPlate : true;
+    const qty = parseNum(ev.quantity);
+    const l = parseNum(ev.length);
+    const w = parseNum(ev.width);
+    const s = parseNum(ev.size);
+    const secWt = parseNum(ev.sectionalWeight);
+
+    if (isPlate) {
+      return (l * w * s * DENSITY * qty) / 1_000_000;
     } else {
-      return (parseNum(ev.length) / 1000) * parseNum(ev.sectionalWeight) * parseNum(ev.quantity);
+      return (l / 1000) * secWt * qty;
     }
   };
 
   const startEdit = (row) => {
     const key = `${row.firestoreId}-${row.itemIndex}`;
-    setEditingKey(key);
-    setEditValues({
-      quantity: row.quantity,
-      section: row.section,
+    const ev = {
+      quantity: row.quantity ?? 0,
+      section: row.section ?? "",
       size: row.size ?? 0,
-      length: row.length,
-      width: row.width,
+      length: row.length ?? 0,
+      width: row.width ?? 0,
       sectionalWeight: row.sectionalWeight ?? 0,
-      singleWeight: row.singleWeight,
+      singleWeight: row.singleWeight ?? 0,
       drgWeight: row.drgWeight ?? 0,
-      totalWeight: row.totalWeight,
-      isPlate: row.isPlate,
-    });
+      totalWeight: row.totalWeight ?? 0,
+      isPlate: row.isPlate !== undefined ? row.isPlate : true,
+    };
+    ev.drgWeight = autoDrgWeight(ev);
+    ev.totalWeight = autoCalcWeight(ev);
+
+    setEditingKey(key);
+    setEditValues(ev);
     setEditManual({ drgWeight: false, totalWeight: false });
   };
 
@@ -228,7 +247,7 @@ export default function ViewData() {
         const w = parseNum(editValues.width);
         const s = parseNum(editValues.size);
         const secWt = parseNum(editValues.sectionalWeight);
-        const isPlate = editValues.isPlate;
+        const isPlate = editValues.isPlate !== undefined ? editValues.isPlate : true;
         const drgWt = editManual.drgWeight ? parseNum(editValues.drgWeight) : qty * sw;
         const calcWt = editManual.totalWeight
           ? parseNum(editValues.totalWeight)
@@ -448,8 +467,12 @@ export default function ViewData() {
               filteredData.map((row, idx) => {
                 const rowKey = `${row.firestoreId}-${row.itemIndex}`;
                 const isEditing = editingKey === rowKey;
-                const displayDrgWeight = isEditing ? parseNum(editValues.drgWeight) : parseNum(row.drgWeight);
-                const displayCalcWeight = isEditing ? parseNum(editValues.totalWeight) : parseNum(row.totalWeight);
+                const displayDrgWeight = isEditing
+                  ? (editManual.drgWeight ? parseNum(editValues.drgWeight) : autoDrgWeight(editValues))
+                  : parseNum(row.drgWeight);
+                const displayCalcWeight = isEditing
+                  ? (editManual.totalWeight ? parseNum(editValues.totalWeight) : autoCalcWeight(editValues))
+                  : parseNum(row.totalWeight);
                 const displayQty = isEditing ? parseNum(editValues.quantity) : parseNum(row.quantity);
                 const displayCalcSingleWeight = displayQty ? displayCalcWeight / displayQty : 0;
                 const diff = displayDrgWeight - displayCalcWeight;
@@ -474,8 +497,14 @@ export default function ViewData() {
                         if (isEditing) return (
                           <td key={f}>
                             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                              <input className="edit-input edit-input--numeric" type="number" step="0.001"
-                                value={editValues.totalWeight}
+                              <input
+                                className="edit-input edit-input--numeric"
+                                type="number"
+                                step="0.001"
+                                value={editManual.totalWeight
+                                  ? formatInputNum(editValues.totalWeight)
+                                  : formatInputNum(autoCalcWeight(editValues))
+                                }
                                 onChange={(e) => handleEditChange("totalWeight", e.target.value)}
                                 style={{ borderColor: editManual.totalWeight ? "#e67e22" : "#27ae60" }}
                               />
@@ -493,8 +522,14 @@ export default function ViewData() {
                         if (isEditing) return (
                           <td key={f}>
                             <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                              <input className="edit-input edit-input--numeric" type="number" step="0.001"
-                                value={editValues.drgWeight}
+                              <input
+                                className="edit-input edit-input--numeric"
+                                type="number"
+                                step="0.001"
+                                value={editManual.drgWeight
+                                  ? formatInputNum(editValues.drgWeight)
+                                  : formatInputNum(autoDrgWeight(editValues))
+                                }
                                 onChange={(e) => handleEditChange("drgWeight", e.target.value)}
                                 style={{ borderColor: editManual.drgWeight ? "#e67e22" : "#27ae60" }}
                               />
