@@ -685,7 +685,11 @@ export default function EntryPage() {
           pos: i.pos,
           quantity: parseNum(i.quantity),
           section: i.section,
-          size: parseNum(i.size),
+          // Plates use a numeric thickness (e.g. 10), so it's safe to store as a number.
+          // Sections (angles, channels, etc.) use a descriptive size like "110 x 110 x 10"
+          // which must be kept as text — running it through parseNum would truncate it
+          // down to just "110", losing the rest of the value.
+          size: i.isPlate ? parseNum(i.size) : (i.size || "").toString().trim(),
           length: parseNum(i.length),
           width: parseNum(i.width),
           sectionalWeight: parseNum(i.sectionalWeight),

@@ -179,7 +179,9 @@ export default function ViewData() {
     const ev = {
       quantity: row.quantity ?? 0,
       section: row.section ?? "",
-      size: row.size ?? 0,
+      // Keep size as the raw stored value (string for sections like "110 x 110 x 10",
+      // number for plate thickness) instead of forcing it to 0.
+      size: row.size ?? "",
       length: row.length ?? 0,
       width: row.width ?? 0,
       sectionalWeight: row.sectionalWeight ?? 0,
@@ -258,7 +260,9 @@ export default function ViewData() {
           ...item,
           quantity: qty,
           section: editValues.section,
-          size: s,
+          // Plate size is numeric thickness; Section size is free text
+          // (e.g. "110 x 110 x 10") and must be saved as-is, not parsed as a number.
+          size: isPlate ? s : (editValues.size || "").toString().trim(),
           length: l,
           width: w,
           sectionalWeight: secWt,
@@ -341,6 +345,8 @@ export default function ViewData() {
           if (f === "pos") return String(row[f]).padStart(3, "0");
           if (f === "difference") return formatNum(diff);
           if (f === "calcSingleWeight") return formatNum(csw);
+          // Size is exported exactly as entered — no forced decimal formatting.
+          if (f === "size") return row.size ?? "";
           if (numericFields.has(f)) return formatNum(row[f]);
           return row[f] ?? "";
         }),
@@ -374,6 +380,8 @@ export default function ViewData() {
           if (f === "pos") return String(row[f]).padStart(3, "0");
           if (f === "difference") return formatNum(diff);
           if (f === "calcSingleWeight") return formatNum(csw);
+          // Size is exported exactly as entered — no forced decimal formatting.
+          if (f === "size") return row.size ?? "";
           if (numericFields.has(f)) return formatNum(row[f]);
           return row[f] ?? "";
         }),
@@ -555,10 +563,12 @@ export default function ViewData() {
                       }
 
                       if (isEditing && editableFields.has(f)) {
-                        if (f === "section") return (
+                        // Section name, and Size when the row is a non-plate Section
+                        // (e.g. "110 x 110 x 10"), are free text — not numeric.
+                        if (f === "section" || (f === "size" && !editValues.isPlate)) return (
                           <td key={f}>
-                            <input className="edit-input" type="text" value={editValues.section}
-                              onChange={(e) => handleEditChange("section", e.target.value)} />
+                            <input className="edit-input" type="text" value={editValues[f] ?? ""}
+                              onChange={(e) => handleEditChange(f, e.target.value)} />
                           </td>
                         );
                         return (
@@ -567,6 +577,13 @@ export default function ViewData() {
                               value={editValues[f]} onChange={(e) => handleEditChange(f, e.target.value)} />
                           </td>
                         );
+                      }
+
+                      // Size is shown exactly as entered — no forced decimal formatting.
+                      // Section rows store free text (e.g. "110 x 110 x 10"); Plate rows
+                      // store a plain thickness number — both display raw, unformatted.
+                      if (f === "size") {
+                        return <td key={f} style={{ whiteSpace: "nowrap" }}>{row.size ?? ""}</td>;
                       }
 
                       const displayValue = numericFields.has(f) ? formatNum(row[f]) : (row[f] ?? "");
