@@ -23,6 +23,12 @@ export default function AbstractReport() {
           if (entry.items && Array.isArray(entry.items)) {
             entry.items.forEach((item) => {
               const toNum = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
+
+              // Preserve the full size/designation string (e.g. "75*75*6")
+              const sectionLabel = (item.section || item.designation || "").toString().trim();
+              // sizeDisplay: use designation or size as a display string (not parsed to number)
+              const sizeDisplay = (item.size || item.thickness || "").toString().trim();
+
               rows.push({
                 poNo: entry.poNo || "",
                 equipment: entry.equipment || "",
@@ -30,8 +36,9 @@ export default function AbstractReport() {
                 drawingNumber: entry.drawingNumber || "",
                 pos: item.pos,
                 quantity: toNum(item.quantity),
-                section: (item.section || item.size || item.designation || "").toString().trim(),
-                size: toNum(item.size ?? item.thickness ?? 0),
+                section: sectionLabel,
+                sizeDisplay: sizeDisplay,          // ← full string like "75*75*6"
+                size: toNum(item.size ?? item.thickness ?? 0), // numeric fallback
                 length: toNum(item.length),
                 width: toNum(item.width),
                 sectionalWeight: toNum(item.sectionalWeight ?? 0),
@@ -61,15 +68,17 @@ export default function AbstractReport() {
     return result;
   }, [data, searchPONo, searchPartName]);
 
-  // Section-wise aggregation (grouped by section + size)
+  // Section-wise aggregation — each unique section+sizeDisplay gets its own row
   const sectionData = useMemo(() => {
     const grouped = {};
     filteredRows.forEach((row) => {
-      const key = `${row.section || "Unknown"}__${row.size || 0}`;
+      // Key by section name AND the full size string so 75*75*6 and 100*100*10 are separate
+      const key = `${row.section || "Unknown"}__${row.sizeDisplay || row.size}`;
       if (!grouped[key]) {
         grouped[key] = {
           section: row.section || "Unknown",
-          size: row.size || 0,
+          sizeDisplay: row.sizeDisplay || String(row.size),
+          size: row.size,
           drgWeight: 0,
           totalWeight: 0,
           totalQty: 0,
@@ -82,7 +91,7 @@ export default function AbstractReport() {
     return Object.values(grouped).sort((a, b) => {
       const sectionCmp = a.section.localeCompare(b.section);
       if (sectionCmp !== 0) return sectionCmp;
-      return a.size - b.size;
+      return a.sizeDisplay.localeCompare(b.sizeDisplay);
     });
   }, [filteredRows]);
 
@@ -105,11 +114,13 @@ export default function AbstractReport() {
       grouped[key].totalWeight += row.totalWeight;
       grouped[key].totalQty += row.quantity;
 
-      const secKey = `${row.section || "Unknown"}__${row.size || 0}`;
+      // Also key nested sections by full size string
+      const secKey = `${row.section || "Unknown"}__${row.sizeDisplay || row.size}`;
       if (!grouped[key].sections[secKey]) {
         grouped[key].sections[secKey] = {
           section: row.section || "Unknown",
-          size: row.size || 0,
+          sizeDisplay: row.sizeDisplay || String(row.size),
+          size: row.size,
           totalQty: 0,
           drgWeight: 0,
           totalWeight: 0,
@@ -127,27 +138,23 @@ export default function AbstractReport() {
         sections: Object.values(d.sections).sort((a, b) => {
           const cmp = a.section.localeCompare(b.section);
           if (cmp !== 0) return cmp;
-          return a.size - b.size;
+          return a.sizeDisplay.localeCompare(b.sizeDisplay);
         }),
       }));
   }, [filteredRows]);
 
   const grandTotals = useMemo(() => {
     if (viewMode === "section") {
-      const tw = sectionData.reduce((s, x) => s + x.totalWeight, 0);
-      const tq = sectionData.reduce((s, x) => s + x.totalQty, 0);
       return {
         drgWeight: sectionData.reduce((s, x) => s + x.drgWeight, 0),
-        totalWeight: tw,
-        totalQty: tq,
+        totalWeight: sectionData.reduce((s, x) => s + x.totalWeight, 0),
+        totalQty: sectionData.reduce((s, x) => s + x.totalQty, 0),
       };
     } else {
-      const tw = drawingData.reduce((s, x) => s + x.totalWeight, 0);
-      const tq = drawingData.reduce((s, x) => s + x.totalQty, 0);
       return {
         drgWeight: drawingData.reduce((s, x) => s + x.drgWeight, 0),
-        totalWeight: tw,
-        totalQty: tq,
+        totalWeight: drawingData.reduce((s, x) => s + x.totalWeight, 0),
+        totalQty: drawingData.reduce((s, x) => s + x.totalQty, 0),
       };
     }
   }, [viewMode, sectionData, drawingData]);
@@ -179,7 +186,7 @@ export default function AbstractReport() {
       const body = sectionData.map((row, i) => [
         i + 1,
         row.section,
-        fmt3(row.size),
+        row.sizeDisplay,   // ← full size string in PDF
         fmt3(row.drgWeight),
         fmt3(row.totalWeight),
         fmt3(Math.abs(row.drgWeight - row.totalWeight)),
@@ -194,7 +201,7 @@ export default function AbstractReport() {
       ]);
       autoTable(doc, {
         startY: 80,
-        head: [["S.No", "Section", "Size (mm)", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]],
+        head: [["S.No", "Section", "Size", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]],
         body,
         theme: "grid",
         styles: { fontSize: 8, cellPadding: 3 },
@@ -202,7 +209,7 @@ export default function AbstractReport() {
         columnStyles: {
           0: { halign: "center", cellWidth: 30 },
           1: { halign: "left" },
-          2: { halign: "right" },
+          2: { halign: "left" },   // size is now text, left-align
           3: { halign: "right" },
           4: { halign: "right" },
           5: { halign: "right" },
@@ -226,7 +233,7 @@ export default function AbstractReport() {
             { content: sec.section, styles: { textColor: [100, 100, 100] } },
             { content: fmt3(sec.drgWeight), styles: { halign: "right", textColor: [100, 100, 100] } },
             { content: fmt3(sec.totalWeight), styles: { halign: "right", textColor: [100, 100, 100] } },
-            { content: `Size: ${fmt3(sec.size)}`, styles: { textColor: [100, 100, 100], fontSize: 7 } },
+            { content: `Size: ${sec.sizeDisplay}`, styles: { textColor: [100, 100, 100], fontSize: 7 } },
           ]);
         });
       });
@@ -267,12 +274,12 @@ export default function AbstractReport() {
     wsData.push([]);
 
     if (viewMode === "section") {
-      wsData.push(["S.No", "Section", "Size (mm)", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]);
+      wsData.push(["S.No", "Section", "Size", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference"]);
       sectionData.forEach((row, i) => {
         wsData.push([
           i + 1,
           row.section,
-          Number(fmt3(row.size)),
+          row.sizeDisplay,   // ← full size string in Excel
           Number(fmt3(row.drgWeight)),
           Number(fmt3(row.totalWeight)),
           Number(fmt3(Math.abs(row.drgWeight - row.totalWeight))),
@@ -280,12 +287,12 @@ export default function AbstractReport() {
       });
       wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight)), Number(fmt3(Math.abs(grandTotals.drgWeight - grandTotals.totalWeight)))]);
     } else {
-      wsData.push(["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference", "Section", "Size (mm)", "Sec Drg Wt", "Sec Calc Wt"]);
+      wsData.push(["S.No", "Drawing No", "Part Name", "Drg Weight (Kg)", "Calc. Weight (kg)", "Difference", "Section", "Size", "Sec Drg Wt", "Sec Calc Wt"]);
       drawingData.forEach((row, i) => {
         const diff = Math.abs(row.drgWeight - row.totalWeight);
         wsData.push([i + 1, row.drawingNumber, row.partName, Number(fmt3(row.drgWeight)), Number(fmt3(row.totalWeight)), Number(fmt3(diff)), "", "", "", ""]);
         row.sections.forEach((sec) => {
-          wsData.push(["", "", `  ↳ ${sec.section}`, "", "", "", sec.section, Number(fmt3(sec.size)), Number(fmt3(sec.drgWeight)), Number(fmt3(sec.totalWeight))]);
+          wsData.push(["", "", `  ↳ ${sec.section}`, "", "", "", sec.section, sec.sizeDisplay, Number(fmt3(sec.drgWeight)), Number(fmt3(sec.totalWeight))]);
         });
       });
       wsData.push(["TOTAL", "", "", Number(fmt3(grandTotals.drgWeight)), Number(fmt3(grandTotals.totalWeight)), "", "", "", "", ""]);
@@ -355,7 +362,7 @@ export default function AbstractReport() {
               <tr>
                 <th>S.No</th>
                 <th>Section</th>
-                <th>Size (mm)</th>
+                <th>Size</th>
                 <th>Drg Weight (Kg)</th>
                 <th>Calc. Weight (kg)</th>
                 <th>Difference</th>
@@ -369,10 +376,10 @@ export default function AbstractReport() {
                   const diff = row.drgWeight - row.totalWeight;
                   const diffClass = Math.abs(diff) < 0.1 ? "" : diff > 0 ? "diff-over" : "diff-under";
                   return (
-                    <tr key={`${row.section}-${row.size}`}>
+                    <tr key={`${row.section}-${row.sizeDisplay}`}>
                       <td>{i + 1}</td>
                       <td className="text-left">{row.section}</td>
-                      <td className="numeric-cell">{fmt3(row.size)}</td>
+                      <td className="text-left">{row.sizeDisplay}</td>  {/* ← full size string */}
                       <td className="numeric-cell">{fmt3(row.drgWeight)}</td>
                       <td className="numeric-cell">{fmt3(row.totalWeight)}</td>
                       <td className={`numeric-cell ${diffClass}`}>
@@ -448,7 +455,7 @@ export default function AbstractReport() {
                             {sec.section}
                           </td>
                           <td style={{ color: "#888", fontSize: "11px" }}>
-                            Size: {fmt3(sec.size)} mm
+                            Size: {sec.sizeDisplay}  {/* ← full size string */}
                           </td>
                           <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(sec.drgWeight)}</td>
                           <td className="numeric-cell" style={{ color: "#555", fontSize: "12px" }}>{fmt3(sec.totalWeight)}</td>

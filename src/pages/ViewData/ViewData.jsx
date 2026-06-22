@@ -179,8 +179,6 @@ export default function ViewData() {
     const ev = {
       quantity: row.quantity ?? 0,
       section: row.section ?? "",
-      // Keep size as the raw stored value (string for sections like "110 x 110 x 10",
-      // number for plate thickness) instead of forcing it to 0.
       size: row.size ?? "",
       length: row.length ?? 0,
       width: row.width ?? 0,
