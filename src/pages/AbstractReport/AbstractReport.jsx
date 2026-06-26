@@ -59,7 +59,10 @@ export default function AbstractReport() {
   }, []);
 
   const poNoOptions = useMemo(() => [...new Set(data.map((r) => r.poNo).filter(Boolean))].sort(), [data]);
-  const partNameOptions = useMemo(() => [...new Set(data.map((r) => r.partName).filter(Boolean))].sort(), [data]);
+  const partNameOptions = useMemo(() => {
+  const source = searchPONo ? data.filter((r) => r.poNo === searchPONo) : data;
+  return [...new Set(source.map((r) => r.partName).filter(Boolean))].sort();
+  }, [data, searchPONo]);
 
   const filteredRows = useMemo(() => {
     let result = [...data];
@@ -315,7 +318,7 @@ export default function AbstractReport() {
         <div className="filter-row">
           <div className="filter-group">
             <label>POC No:</label>
-            <select className="filter-select" value={searchPONo} onChange={(e) => setSearchPONo(e.target.value)}>
+            <select className="filter-select" value={searchPONo} onChange={(e) => { setSearchPONo(e.target.value); setSearchPartName(""); }}>
               <option value="">All POC Nos</option>
               {poNoOptions.map((p) => <option key={p} value={p}>{p}</option>)}
             </select>

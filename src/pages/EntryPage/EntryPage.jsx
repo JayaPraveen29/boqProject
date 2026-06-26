@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { HiPlus, HiTrash } from "react-icons/hi2";
+import { HiPlus, HiTrash, HiDocumentDuplicate } from "react-icons/hi2";
 import { db } from "../../firebase";
 import {
   collection, addDoc, getDocs, query, orderBy, deleteDoc, doc
@@ -60,6 +60,17 @@ export default function EntryPage() {
 
   const [nextPos, setNextPos] = useState(1);
   const [pocWeightMap, setPocWeightMap] = useState({});
+  // ─── Copy from Entry modal state ──────────────────────────────────────────
+  const [copyModal, setCopyModal] = useState({
+    open: false,
+    pocFilter: "",
+    equipmentFilter: "",
+    entries: [],
+    loading: false,
+    selected: null,
+    copyWhat: { items: true },
+  });
+
 
   // ─── Fetch all master data + relation tables ───────────────────────────────
   const fetchMasterData = async () => {
@@ -694,6 +705,69 @@ export default function EntryPage() {
     );
   };
 
+
+  // ─── Copy from Entry helpers ───────────────────────────────────────────────
+  const openCopyModal = () => {
+    setCopyModal((m) => ({ ...m, open: true, entries: [], selected: null, pocFilter: "", equipmentFilter: "" }));
+    // auto-fetch all entries immediately on open
+    fetchEntriesForCopy("", "");
+  };
+
+  const closeCopyModal = () => {
+    setCopyModal((m) => ({ ...m, open: false }));
+  };
+
+  // Accepts filter values explicitly to avoid stale-closure issues
+  const fetchEntriesForCopy = async (pocFilterVal, eqFilterVal) => {
+    const pocF = (pocFilterVal ?? "").trim().toLowerCase();
+    const eqF  = (eqFilterVal  ?? "").trim().toLowerCase();
+    setCopyModal((m) => ({ ...m, loading: true, entries: [], selected: null }));
+    try {
+      const snap = await getDocs(query(collection(db, "entries"), orderBy("createdAt", "desc")));
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const filtered = all.filter((e) => {
+        const pocMatch = !pocF || (e.pocNo || e.poNo || "").toLowerCase().includes(pocF);
+        const eqMatch  = !eqF  || (e.equipment || "").toLowerCase().includes(eqF);
+        return pocMatch && eqMatch;
+      });
+      setCopyModal((m) => ({ ...m, entries: filtered, loading: false }));
+    } catch (err) {
+      console.error("Error fetching entries for copy:", err);
+      setCopyModal((m) => ({ ...m, loading: false }));
+      alert("Error fetching entries.");
+    }
+  };
+
+  const applyCopy = () => {
+    const { selected, copyWhat } = copyModal;
+    if (!selected) return;
+
+    if (copyWhat.items && selected.items && selected.items.length > 0) {
+      const basePos = nextPos;
+      const newItems = selected.items.map((si, idx) => ({
+        id: Date.now() + idx,
+        pos: basePos + idx,
+        quantity: si.quantity ?? "",
+        section: si.section ?? "",
+        size: si.size !== undefined ? String(si.size) : "",
+        length: si.length ?? "",
+        width: si.width ?? "",
+        sectionalWeight: si.sectionalWeight ?? "",
+        unitWeight: si.unitWeight ?? "",
+        unitWeightManual: false,
+        singleWeight: si.singleWeight ?? "",
+        drgWeight: si.drgWeight ?? "",
+        drgWeightManual: false,
+        calcWeightManual: false,
+        isPlate: si.isPlate !== undefined ? si.isPlate : true,
+        totalWeight: si.totalWeight ?? "",
+      }));
+      setItems((prev) => [...prev, ...newItems]);
+    }
+
+    closeCopyModal();
+  };
+
   // ─── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (!headerData["POC No"]) return alert("Please select POC No");
@@ -775,7 +849,16 @@ export default function EntryPage() {
         </div>
 
         <hr />
-        <h3>Parts / Items</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "15px" }}>
+          <h3 style={{ margin: 0 }}>Parts / Items</h3>
+          <button
+            type="button"
+            className="btn-copy-entry"
+            onClick={openCopyModal}
+          >
+            <HiDocumentDuplicate style={{ fontSize: "16px" }} /> Copy from Entry
+          </button>
+        </div>
 
         {items.map((item, index) => {
           const availableSizes   = getAvailableSizes(item.section);
@@ -908,6 +991,116 @@ export default function EntryPage() {
           {loading ? "Saving..." : "Save Entry"}
         </button>
       </div>
+
+      {/* ─── Copy from Entry Modal ─────────────────────────────────────────── */}
+      {copyModal.open && (
+        <div className="copy-modal-overlay" onClick={closeCopyModal}>
+          <div className="copy-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="copy-modal-header">
+              <h3>Copy Parts / Items from Another Entry</h3>
+              <button className="copy-modal-close" onClick={closeCopyModal}>✕</button>
+            </div>
+
+            <div className="copy-modal-filters">
+              <div className="entry-input">
+                <label>Filter by POC No</label>
+                <select
+                  className="dropdown-select"
+                  value={copyModal.pocFilter}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCopyModal((m) => ({ ...m, pocFilter: val, selected: null }));
+                    fetchEntriesForCopy(val, copyModal.equipmentFilter);
+                  }}
+                >
+                  <option value="">All POC Nos</option>
+                  {allPOCNos.map((o) => (
+                    <option key={o.id} value={o.value}>{o.value}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="entry-input">
+                <label>Filter by Equipment</label>
+                <select
+                  className="dropdown-select"
+                  value={copyModal.equipmentFilter}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCopyModal((m) => ({ ...m, equipmentFilter: val, selected: null }));
+                    fetchEntriesForCopy(copyModal.pocFilter, val);
+                  }}
+                >
+                  <option value="">All Equipment</option>
+                  {allEquipments.map((o) => (
+                    <option key={o.id} value={o.value}>{o.value}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {copyModal.loading && <p className="copy-modal-info">Loading…</p>}
+
+            {!copyModal.loading && copyModal.entries.length === 0 && (
+              <p className="copy-modal-info copy-modal-empty">No entries found for the selected filters.</p>
+            )}
+
+            {copyModal.entries.length > 0 && (
+              <div className="copy-modal-list">
+                {copyModal.entries.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={"copy-entry-card" + (copyModal.selected?.id === entry.id ? " copy-entry-card--selected" : "")}
+                    onClick={() => setCopyModal((m) => ({ ...m, selected: entry }))}
+                  >
+                    <div className="copy-entry-card-header">
+                      <span className="copy-entry-tag">POC: {entry.pocNo || entry.poNo || "—"}</span>
+                      <span className="copy-entry-tag">Equipment: {entry.equipment || "—"}</span>
+                      <span className="copy-entry-tag">Drawing: {entry.drawingNumber || "—"}</span>
+                      <span className="copy-entry-tag">Part: {entry.partName || "—"}</span>
+                      <span className="copy-entry-tag copy-entry-rows">{(entry.items || []).length} row(s)</span>
+                    </div>
+                    {copyModal.selected?.id === entry.id && entry.items && entry.items.length > 0 && (
+                      <table className="copy-preview-table">
+                        <thead>
+                          <tr>
+                            <th>POS</th><th>Qty</th><th>Section</th><th>Size</th>
+                            <th>Length</th><th>Width</th><th>Total Wt (kg)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {entry.items.map((it, i) => (
+                            <tr key={i}>
+                              <td>{it.pos}</td>
+                              <td>{it.quantity}</td>
+                              <td>{it.section || "—"}</td>
+                              <td>{it.size || "—"}</td>
+                              <td>{it.length || "—"}</td>
+                              <td>{it.width || "—"}</td>
+                              <td>{it.totalWeight !== undefined ? Number(it.totalWeight).toFixed(3) : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {copyModal.selected && (
+              <div className="copy-modal-footer">
+                <div className="copy-what-label">Copying: <strong>Parts / Items ({(copyModal.selected.items || []).length} rows)</strong></div>
+                <div className="copy-modal-actions">
+                  <button className="btn-copy-cancel" onClick={closeCopyModal} type="button">Cancel</button>
+                  <button className="btn-copy-apply" onClick={applyCopy} type="button">
+                    <HiDocumentDuplicate /> Copy Items
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
