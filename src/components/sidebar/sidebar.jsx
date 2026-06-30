@@ -73,6 +73,14 @@ export default function Sidebar() {
               </div>
             )}
           </div>
+
+          <NavLink
+            to="/sectional-weights-report"
+            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+            onClick={closeSidebar}
+          >
+             Sectional Weights Report
+          </NavLink>
         </nav>
       </div>
     </>
