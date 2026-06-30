@@ -64,9 +64,7 @@ export default function SectionalWeightsReport() {
   return (
     <div className="swr-container">
       <h1 className="swr-heading">Sectional Weights Report</h1>
-      <p className="swr-subtitle">
-        Section, Size, and Sectional Weight (kg/m) values already used on the Entry Page — one row per Section + Size.
-      </p>
+      
 
       <div className="swr-toolbar">
         <div className="swr-search-wrapper">
