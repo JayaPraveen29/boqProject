@@ -43,6 +43,14 @@ export default function Sidebar() {
             📋 View Data
           </NavLink>
 
+          <NavLink
+            to="/data-manager"
+            className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+            onClick={closeSidebar}
+          >
+            🗂️ Data Manager
+          </NavLink>
+
           {/* Reports Dropdown */}
           <div className="nav-dropdown">
             <button
