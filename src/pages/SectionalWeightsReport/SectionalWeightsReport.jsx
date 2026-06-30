@@ -12,7 +12,7 @@ export default function SectionalWeightsReport() {
     setLoading(true);
     try {
       const snap = await getDocs(collection(db, "entries"));
-      const map = new Map(); // dedupe by section|size|length|sectionalWeight
+      const map = new Map(); // dedupe by section|size|sectionalWeight (length intentionally ignored)
 
       snap.docs.forEach((d) => {
         const data = d.data();
@@ -20,23 +20,21 @@ export default function SectionalWeightsReport() {
         data.items.forEach((item) => {
           const section = (item.section ?? "").toString().trim();
           const size = item.size ?? "";
-          const length = item.length ?? "";
           const sectionalWeight = item.sectionalWeight ?? "";
 
           // Only include rows that actually have a section and a sectional weight
           if (!section || sectionalWeight === "" || sectionalWeight === undefined || sectionalWeight === null) return;
 
-          const key = `${section}|${size}|${length}|${sectionalWeight}`;
+          const key = `${section}|${size}`;
           if (!map.has(key)) {
-            map.set(key, { section, size, length, sectionalWeight });
+            map.set(key, { section, size, sectionalWeight });
           }
         });
       });
 
       const unique = Array.from(map.values()).sort((a, b) => {
         if (a.section !== b.section) return a.section.localeCompare(b.section, undefined, { numeric: true });
-        if (a.size !== b.size) return String(a.size).localeCompare(String(b.size), undefined, { numeric: true });
-        return String(a.length).localeCompare(String(b.length), undefined, { numeric: true });
+        return String(a.size).localeCompare(String(b.size), undefined, { numeric: true });
       });
 
       setRows(unique);
@@ -52,7 +50,7 @@ export default function SectionalWeightsReport() {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return rows;
     return rows.filter((r) =>
-      [r.section, r.size, r.length, r.sectionalWeight]
+      [r.section, r.size, r.sectionalWeight]
         .some((v) => v.toString().toLowerCase().includes(q))
     );
   }, [rows, searchQuery]);
@@ -67,7 +65,7 @@ export default function SectionalWeightsReport() {
     <div className="swr-container">
       <h1 className="swr-heading">Sectional Weights Report</h1>
       <p className="swr-subtitle">
-        Section, Size, Length, and Sectional Weight (kg/m) values already used on the Entry Page.
+        Section, Size, and Sectional Weight (kg/m) values already used on the Entry Page — one row per Section + Size.
       </p>
 
       <div className="swr-toolbar">
@@ -76,7 +74,7 @@ export default function SectionalWeightsReport() {
           <input
             type="text"
             className="swr-search"
-            placeholder="Search Section, Size, Length, Sectional Weight..."
+            placeholder="Search Section, Size, Sectional Weight..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -106,7 +104,6 @@ export default function SectionalWeightsReport() {
                 <th className="swr-th swr-th--no">#</th>
                 <th className="swr-th">Section</th>
                 <th className="swr-th">Size (mm)</th>
-                <th className="swr-th">Length (mm)</th>
                 <th className="swr-th">Sectional Weight (kg/m)</th>
               </tr>
             </thead>
@@ -116,7 +113,6 @@ export default function SectionalWeightsReport() {
                   <td className="swr-td swr-td--no">{idx + 1}</td>
                   <td className="swr-td">{row.section || "—"}</td>
                   <td className="swr-td">{row.size !== "" ? row.size : "—"}</td>
-                  <td className="swr-td">{row.length !== "" ? row.length : "—"}</td>
                   <td className="swr-td swr-td--numeric">{formatNum(row.sectionalWeight)}</td>
                 </tr>
               ))}
