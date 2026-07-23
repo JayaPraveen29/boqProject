@@ -13,6 +13,10 @@
 
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+// ngrok's free tier shows a browser warning interstitial that blocks requests
+// unless this header is sent. Harmless if you switch away from ngrok later.
+const NGROK_HEADER = { "ngrok-skip-browser-warning": "true" };
+
 export const db = {}; // placeholder, kept only so `db` still "exists" like before
 
 export function collection(_db, name) {
@@ -42,7 +46,7 @@ function makeDocSnap(row) {
 }
 
 export async function getDocs(refOrQuery) {
-  const res = await fetch(`${BASE_URL}/api/${refOrQuery.name}`);
+  const res = await fetch(`${BASE_URL}/api/${refOrQuery.name}`, { headers: NGROK_HEADER });
   if (!res.ok) throw new Error(`Failed to fetch ${refOrQuery.name}`);
   let rows = await res.json();
 
@@ -64,7 +68,7 @@ export async function getDocs(refOrQuery) {
 }
 
 export async function getDoc(docRef) {
-  const res = await fetch(`${BASE_URL}/api/${docRef.name}/${docRef.id}`);
+  const res = await fetch(`${BASE_URL}/api/${docRef.name}/${docRef.id}`, { headers: NGROK_HEADER });
   if (!res.ok) throw new Error(`Failed to fetch ${docRef.name}/${docRef.id}`);
   const row = await res.json();
   if (!row) {
@@ -83,7 +87,7 @@ export async function getDoc(docRef) {
 export async function addDoc(collRef, data) {
   const res = await fetch(`${BASE_URL}/api/${collRef.name}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...NGROK_HEADER },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(`Failed to add doc to ${collRef.name}`);
@@ -94,7 +98,7 @@ export async function addDoc(collRef, data) {
 export async function updateDoc(docRef, data) {
   const res = await fetch(`${BASE_URL}/api/${docRef.name}/${docRef.id}`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...NGROK_HEADER },
     body: JSON.stringify(data),
   });
   if (!res.ok) throw new Error(`Failed to update ${docRef.name}/${docRef.id}`);
@@ -104,6 +108,7 @@ export async function updateDoc(docRef, data) {
 export async function deleteDoc(docRef) {
   const res = await fetch(`${BASE_URL}/api/${docRef.name}/${docRef.id}`, {
     method: "DELETE",
+    headers: NGROK_HEADER,
   });
   if (!res.ok) throw new Error(`Failed to delete ${docRef.name}/${docRef.id}`);
   return res.json();
