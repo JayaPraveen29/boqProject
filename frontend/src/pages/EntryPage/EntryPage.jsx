@@ -127,7 +127,7 @@ export default function EntryPage() {
       setPocWeightMap(weightMap);
     } catch (error) {
       console.error("Error fetching master data:", error);
-      alert("Error fetching data from Firebase");
+      alert("Error fetching data");
     }
   };
 
