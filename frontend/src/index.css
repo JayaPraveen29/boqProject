@@ -1,0 +1,25 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: #f5f5f5;
+  color: #2c3e50;
+}
+
+:root {
+  --sidebar-width: 240px;
+  --sidebar-bg: #2c3e50;
+  --sidebar-text: #ecf0f1;
+  --accent: #3498db;
+  --accent-hover: #2980b9;
+  --success: #27ae60;
+  --danger: #e74c3c;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8f9fa;
+  --border-color: #dfe6e9;
+  --text-primary: #2c3e50;
+}
