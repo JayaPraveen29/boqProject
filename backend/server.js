@@ -27,6 +27,14 @@ const PLAIN_TABLES = new Set([
   "sectionSizeWidthRelations", "sectionSectionalWeights",
 ]);
 
+
+// mysql2 auto-parses JSON columns into objects already; this only
+// re-parses if it ever comes back as a raw string (some driver configs do).
+function parseJsonField(value) {
+  if (typeof value === "string") return JSON.parse(value);
+  return value;
+}
+
 function isValidTable(name) {
   return PLAIN_TABLES.has(name) || name === "entries";
 }
@@ -40,7 +48,7 @@ app.get("/api/:collection", async (req, res) => {
       const [rows] = await pool.query("SELECT id, data, createdAt FROM entries");
       const docs = rows.map((r) => ({
         id: String(r.id),
-        ...JSON.parse(r.data),
+        ...parseJsonField(r.data),
         createdAt: r.createdAt,
       }));
       return res.json(docs);
@@ -62,7 +70,7 @@ app.get("/api/:collection/:id", async (req, res) => {
     if (collection === "entries") {
       const [rows] = await pool.query("SELECT id, data, createdAt FROM entries WHERE id = ?", [id]);
       if (!rows.length) return res.json(null);
-      return res.json({ id: String(rows[0].id), ...JSON.parse(rows[0].data), createdAt: rows[0].createdAt });
+      return res.json({ id: String(rows[0].id), ...parseJsonField(rows[0].data), createdAt: rows[0].createdAt });
     }
     const [rows] = await pool.query(`SELECT * FROM \`${collection}\` WHERE id = ?`, [id]);
     if (!rows.length) return res.json(null);
@@ -112,7 +120,7 @@ app.put("/api/:collection/:id", async (req, res) => {
     if (collection === "entries") {
       const [rows] = await pool.query("SELECT data FROM entries WHERE id = ?", [id]);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
-      const merged = { ...JSON.parse(rows[0].data), ...body };
+      const merged = { ...parseJsonField(rows[0].data), ...body };
       await pool.query("UPDATE entries SET data = ? WHERE id = ?", [JSON.stringify(merged), id]);
       return res.json({ ok: true });
     }
@@ -128,7 +136,7 @@ app.put("/api/:collection/:id", async (req, res) => {
   }
 });
 
-// ─── DELETE a doc ─────────────────────────────────────────────────────────────
+
 app.delete("/api/:collection/:id", async (req, res) => {
   const { collection, id } = req.params;
   if (!isValidTable(collection)) return res.status(404).json({ error: "Unknown collection" });
